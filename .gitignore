@@ -1,0 +1,34 @@
+# Gradle
+.gradle/
+build/
+**/build/
+
+# Android local config
+local.properties
+*.keystore
+*.jks
+*.pem
+*.p12
+
+# IDE
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated APK/AAB
+*.apk
+*.aab
+
+# Native / CMake / NDK intermediates
+.cxx/
+externalNativeBuild/
+
+# Logs
+*.log
+
+# Kotlin/Java crash dumps
+hs_err_pid*
+replay_pid*

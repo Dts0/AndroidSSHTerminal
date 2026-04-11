@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/nav_graph"
+    app:startDestination="@id/hostListFragment">
+
+    <fragment
+        android:id="@+id/hostListFragment"
+        android:name="com.sshtool.ui.hostlist.HostListFragment"
+        android:label="SSH 主机"
+        tools:layout="@layout/fragment_host_list">
+        
+        <action
+            android:id="@+id/action_hostList_to_editor"
+            app:destination="@id/hostEditorFragment" />
+        
+        <action
+            android:id="@+id/action_hostList_to_terminal"
+            app:destination="@id/terminalFragment" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/hostEditorFragment"
+        android:name="com.sshtool.ui.editor.HostEditorFragment"
+        android:label="编辑主机"
+        tools:layout="@layout/fragment_host_editor">
+        
+        <argument
+            android:name="hostId"
+            app:argType="long"
+            android:defaultValue="-1L" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/terminalFragment"
+        android:name="com.sshtool.ui.terminal.TerminalFragment"
+        android:label="终端"
+        tools:layout="@layout/fragment_terminal">
+        
+        <argument
+            android:name="hostId"
+            app:argType="long" />
+    </fragment>
+
+</navigation>
