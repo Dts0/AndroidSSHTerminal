@@ -184,10 +184,6 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
                     binding.btnDisconnect.isEnabled = true
                     setTerminalInputEnabled(true)
                     binding.statusIndicator.setBackgroundResource(R.drawable.status_connected)
-                    appendSystemMessageBlock(
-                        getString(R.string.connection_success),
-                        getString(R.string.host_key_checking_enabled_notice)
-                    )
                     clearInputField()
                     focusTerminalInput()
                 }
@@ -230,7 +226,6 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
             binding.btnConnect.isEnabled = true
             binding.btnDisconnect.isEnabled = false
             setTerminalInputEnabled(false)
-            appendSystemMessageBlock(getString(R.string.connection_disconnected))
         }
     }
 
@@ -290,18 +285,6 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
     private fun sendRawToTerminal(raw: String) {
         if (!isAdded || _binding == null || !SSHConnectionManager.isConnected()) return
         SSHConnectionManager.getCurrentConnection()?.send(raw)
-    }
-
-    private fun appendSystemMessageBlock(vararg lines: String) {
-        val payload = buildString {
-            lines.forEachIndexed { index, line ->
-                if (index > 0) append("\r\n")
-                append("\r")
-                append(line)
-            }
-            append("\r\n\r\n")
-        }
-        terminalBridge.appendSystemMessage(payload)
     }
 
     private fun clearInputField() {
