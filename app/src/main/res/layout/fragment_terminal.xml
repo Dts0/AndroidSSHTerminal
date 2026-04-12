@@ -99,70 +99,90 @@
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
-                <com.google.android.material.button.MaterialButton
+                <androidx.appcompat.widget.AppCompatButton
                     android:id="@+id/btn_ctrl"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="0dp"
-                    android:layout_height="36dp"
+                                        android:layout_width="0dp"
+                    android:layout_height="28dp"
                     android:layout_weight="1"
                     android:minWidth="0dp"
+                    android:minHeight="28dp"
+                    android:paddingHorizontal="4dp"
+                    android:paddingVertical="0dp"
                     android:text="@string/key_ctrl"
                     android:textAllCaps="false"
-                    android:textSize="12sp" />
+                    android:textColor="#FFFFFF"
+                    android:background="@android:drawable/btn_default_small"
+                    android:textSize="10sp" />
 
-                <com.google.android.material.button.MaterialButton
+                <androidx.appcompat.widget.AppCompatButton
                     android:id="@+id/btn_tab"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="0dp"
-                    android:layout_height="36dp"
+                                        android:layout_width="0dp"
+                    android:layout_height="28dp"
                     android:layout_marginStart="6dp"
                     android:layout_weight="1"
                     android:minWidth="0dp"
+                    android:minHeight="28dp"
+                    android:paddingHorizontal="4dp"
+                    android:paddingVertical="0dp"
                     android:text="@string/key_tab"
                     android:textAllCaps="false"
-                    android:textSize="12sp" />
+                    android:textColor="#FFFFFF"
+                    android:background="@android:drawable/btn_default_small"
+                    android:textSize="10sp" />
 
-                <com.google.android.material.button.MaterialButton
+                <androidx.appcompat.widget.AppCompatButton
                     android:id="@+id/btn_esc"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="0dp"
-                    android:layout_height="36dp"
+                                        android:layout_width="0dp"
+                    android:layout_height="28dp"
                     android:layout_marginStart="6dp"
                     android:layout_weight="1"
                     android:minWidth="0dp"
+                    android:minHeight="28dp"
+                    android:paddingHorizontal="4dp"
+                    android:paddingVertical="0dp"
                     android:text="@string/key_esc"
                     android:textAllCaps="false"
-                    android:textSize="12sp" />
+                    android:textColor="#FFFFFF"
+                    android:background="@android:drawable/btn_default_small"
+                    android:textSize="10sp" />
 
-                <com.google.android.material.button.MaterialButton
+                <androidx.appcompat.widget.AppCompatButton
                     android:id="@+id/btn_paste"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="0dp"
-                    android:layout_height="36dp"
+                                        android:layout_width="0dp"
+                    android:layout_height="28dp"
                     android:layout_marginStart="6dp"
                     android:layout_weight="1"
                     android:minWidth="0dp"
+                    android:minHeight="28dp"
+                    android:paddingHorizontal="4dp"
+                    android:paddingVertical="0dp"
                     android:text="@string/key_paste"
                     android:textAllCaps="false"
-                    android:textSize="12sp" />
+                    android:textColor="#FFFFFF"
+                    android:background="@android:drawable/btn_default_small"
+                    android:textSize="10sp" />
 
                 <Space
                     android:layout_width="0dp"
-                    android:layout_height="36dp"
+                    android:layout_height="28dp"
                     android:layout_marginStart="6dp"
                     android:layout_weight="0.5" />
 
-                <com.google.android.material.button.MaterialButton
+                <androidx.appcompat.widget.AppCompatButton
                     android:id="@+id/btn_up"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="0dp"
-                    android:layout_height="36dp"
+                                        android:layout_width="0dp"
+                    android:layout_height="28dp"
                     android:layout_marginStart="6dp"
                     android:layout_weight="1"
                     android:minWidth="0dp"
+                    android:minHeight="28dp"
+                    android:paddingHorizontal="4dp"
+                    android:paddingVertical="0dp"
                     android:text="@string/key_up"
                     android:textAllCaps="false"
-                    android:textSize="12sp" />
+                    android:textColor="#FFFFFF"
+                    android:background="@android:drawable/btn_default_small"
+                    android:textSize="10sp" />
             </LinearLayout>
 
             <LinearLayout
@@ -172,95 +192,123 @@
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
-                <com.google.android.material.button.MaterialButton
+                <androidx.appcompat.widget.AppCompatButton
                     android:id="@+id/btn_home"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="0dp"
-                    android:layout_height="36dp"
+                                        android:layout_width="0dp"
+                    android:layout_height="28dp"
                     android:layout_weight="1"
                     android:minWidth="0dp"
+                    android:minHeight="28dp"
+                    android:paddingHorizontal="4dp"
+                    android:paddingVertical="0dp"
                     android:text="@string/key_home"
                     android:textAllCaps="false"
-                    android:textSize="12sp" />
+                    android:textColor="#FFFFFF"
+                    android:background="@android:drawable/btn_default_small"
+                    android:textSize="10sp" />
 
-                <com.google.android.material.button.MaterialButton
+                <androidx.appcompat.widget.AppCompatButton
                     android:id="@+id/btn_end"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="0dp"
-                    android:layout_height="36dp"
+                                        android:layout_width="0dp"
+                    android:layout_height="28dp"
                     android:layout_marginStart="6dp"
                     android:layout_weight="1"
                     android:minWidth="0dp"
+                    android:minHeight="28dp"
+                    android:paddingHorizontal="4dp"
+                    android:paddingVertical="0dp"
                     android:text="@string/key_end"
                     android:textAllCaps="false"
-                    android:textSize="12sp" />
+                    android:textColor="#FFFFFF"
+                    android:background="@android:drawable/btn_default_small"
+                    android:textSize="10sp" />
 
-                <com.google.android.material.button.MaterialButton
+                <androidx.appcompat.widget.AppCompatButton
                     android:id="@+id/btn_pgup"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="0dp"
-                    android:layout_height="36dp"
+                                        android:layout_width="0dp"
+                    android:layout_height="28dp"
                     android:layout_marginStart="6dp"
                     android:layout_weight="1"
                     android:minWidth="0dp"
+                    android:minHeight="28dp"
+                    android:paddingHorizontal="4dp"
+                    android:paddingVertical="0dp"
                     android:text="@string/key_pgup"
                     android:textAllCaps="false"
-                    android:textSize="12sp" />
+                    android:textColor="#FFFFFF"
+                    android:background="@android:drawable/btn_default_small"
+                    android:textSize="10sp" />
 
-                <com.google.android.material.button.MaterialButton
+                <androidx.appcompat.widget.AppCompatButton
                     android:id="@+id/btn_pgdn"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="0dp"
-                    android:layout_height="36dp"
+                                        android:layout_width="0dp"
+                    android:layout_height="28dp"
                     android:layout_marginStart="6dp"
                     android:layout_weight="1"
                     android:minWidth="0dp"
+                    android:minHeight="28dp"
+                    android:paddingHorizontal="4dp"
+                    android:paddingVertical="0dp"
                     android:text="@string/key_pgdn"
                     android:textAllCaps="false"
-                    android:textSize="12sp" />
+                    android:textColor="#FFFFFF"
+                    android:background="@android:drawable/btn_default_small"
+                    android:textSize="10sp" />
 
-                <com.google.android.material.button.MaterialButton
+                <androidx.appcompat.widget.AppCompatButton
                     android:id="@+id/btn_left"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="0dp"
-                    android:layout_height="36dp"
+                                        android:layout_width="0dp"
+                    android:layout_height="28dp"
                     android:layout_marginStart="6dp"
                     android:layout_weight="1"
                     android:minWidth="0dp"
+                    android:minHeight="28dp"
+                    android:paddingHorizontal="4dp"
+                    android:paddingVertical="0dp"
                     android:text="@string/key_left"
                     android:textAllCaps="false"
-                    android:textSize="12sp" />
+                    android:textColor="#FFFFFF"
+                    android:background="@android:drawable/btn_default_small"
+                    android:textSize="10sp" />
 
-                <com.google.android.material.button.MaterialButton
+                <androidx.appcompat.widget.AppCompatButton
                     android:id="@+id/btn_down"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="0dp"
-                    android:layout_height="36dp"
+                                        android:layout_width="0dp"
+                    android:layout_height="28dp"
                     android:layout_marginStart="6dp"
                     android:layout_weight="1"
                     android:minWidth="0dp"
+                    android:minHeight="28dp"
+                    android:paddingHorizontal="4dp"
+                    android:paddingVertical="0dp"
                     android:text="@string/key_down"
                     android:textAllCaps="false"
-                    android:textSize="12sp" />
+                    android:textColor="#FFFFFF"
+                    android:background="@android:drawable/btn_default_small"
+                    android:textSize="10sp" />
 
-                <com.google.android.material.button.MaterialButton
+                <androidx.appcompat.widget.AppCompatButton
                     android:id="@+id/btn_right"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="0dp"
-                    android:layout_height="36dp"
+                                        android:layout_width="0dp"
+                    android:layout_height="28dp"
                     android:layout_marginStart="6dp"
                     android:layout_weight="1"
                     android:minWidth="0dp"
+                    android:minHeight="28dp"
+                    android:paddingHorizontal="4dp"
+                    android:paddingVertical="0dp"
                     android:text="@string/key_right"
                     android:textAllCaps="false"
-                    android:textSize="12sp" />
+                    android:textColor="#FFFFFF"
+                    android:background="@android:drawable/btn_default_small"
+                    android:textSize="10sp" />
             </LinearLayout>
         </LinearLayout>
 
         <com.sshtool.ui.terminal.TerminalInputView
             android:id="@+id/et_input"
             android:layout_width="match_parent"
-            android:layout_height="40dp"
+            android:layout_height="32dp"
             android:layout_marginTop="8dp"
             android:background="@android:color/transparent"
             android:enabled="false"
@@ -268,7 +316,7 @@
             android:focusableInTouchMode="true"
             android:textColor="#FFFFFF"
             android:textColorHint="#777777"
-            android:textSize="13sp" />
+            android:textSize="12sp" />
 
     </LinearLayout>
 
