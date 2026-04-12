@@ -281,7 +281,6 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
     private fun focusTerminalInput() {
         if (!binding.etInput.isEnabled) return
         binding.etInput.requestFocus()
-        binding.terminalView.requestFocus()
         val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
         imm.showSoftInput(binding.etInput, InputMethodManager.SHOW_IMPLICIT)
     }

@@ -26,10 +26,11 @@ class TerminalInputView @JvmOverloads constructor(
 
     var callback: Callback? = null
     private var internalEdit = false
+    private var composingText = ""
 
     init {
         isSingleLine = true
-        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI or EditorInfo.IME_ACTION_NONE
         setText("")
     }
@@ -69,17 +70,29 @@ class TerminalInputView @JvmOverloads constructor(
                     val value = text?.toString().orEmpty()
                     if (value.isNotEmpty()) {
                         callback?.onTextInput(value)
-                        clearInternalText()
                     }
+                    composingText = ""
+                    clearInternalText()
                 }
                 return true
             }
 
             override fun setComposingText(text: CharSequence?, newCursorPosition: Int): Boolean {
+                if (!internalEdit) {
+                    val value = text?.toString().orEmpty()
+                    if (value.isNotEmpty() && value.startsWith(composingText)) {
+                        val delta = value.substring(composingText.length)
+                        if (delta.isNotEmpty()) {
+                            callback?.onTextInput(delta)
+                        }
+                    }
+                    composingText = value
+                }
                 return true
             }
 
             override fun finishComposingText(): Boolean {
+                composingText = ""
                 return true
             }
 
@@ -102,7 +115,8 @@ class TerminalInputView @JvmOverloads constructor(
 
             override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {
                 if (beforeLength > 0) {
-                    callback?.onBackspace()
+                    repeat(beforeLength) { callback?.onBackspace() }
+                    composingText = ""
                     return true
                 }
                 return super.deleteSurroundingText(beforeLength, afterLength)
@@ -112,6 +126,7 @@ class TerminalInputView @JvmOverloads constructor(
 
     fun clearInternalText() {
         internalEdit = true
+        composingText = ""
         text?.clear()
         internalEdit = false
     }
