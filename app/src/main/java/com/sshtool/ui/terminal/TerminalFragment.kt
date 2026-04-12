@@ -63,7 +63,7 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
         setupTerminalInput()
         setupConnectionStatus()
         setupBackPressHandler()
-        connectToHost()
+        attachOrConnectHost()
     }
 
     private fun setupToolbar() {
@@ -76,17 +76,22 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
         terminalBridge = SshTerminalSession(
             context = requireContext().applicationContext,
             outputWriter = { data -> sendRawToTerminal(data) },
-            screenUpdater = { binding.terminalView.onScreenUpdated() }
+            screenUpdater = {
+                val currentBinding = _binding ?: return@SshTerminalSession
+                if (!isAdded) return@SshTerminalSession
+                currentBinding.terminalView.onScreenUpdated()
+            }
         )
         terminalSession = terminalBridge.create()
         binding.terminalView.attachSession(terminalSession)
         binding.terminalView.setTerminalViewClient(object : TerminalViewClient {
             override fun onScale(scale: Float): Float {
+                val currentBinding = _binding ?: return terminalFontSize / 14f
                 val newSize = (14f * scale).coerceIn(8f, 32f)
                 if (kotlin.math.abs(newSize - terminalFontSize) >= 0.1f) {
                     terminalFontSize = newSize
-                    binding.terminalView.setTextSize(terminalFontSize.toInt())
-                    binding.terminalView.onScreenUpdated()
+                    currentBinding.terminalView.setTextSize(terminalFontSize.toInt())
+                    currentBinding.terminalView.onScreenUpdated()
                 }
                 return terminalFontSize / 14f
             }
@@ -143,7 +148,7 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
 
     private fun setupConnectionStatus() {
         binding.btnConnect.setOnClickListener {
-            if (SSHConnectionManager.isConnected()) SSHConnectionManager.disconnect() else connectToHost()
+            if (SSHConnectionManager.isConnected()) SSHConnectionManager.disconnect() else attachOrConnectHost()
         }
         binding.btnDisconnect.setOnClickListener { SSHConnectionManager.disconnect() }
     }
@@ -157,7 +162,7 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
         )
     }
 
-    private fun connectToHost() {
+    private fun attachOrConnectHost() {
         viewLifecycleOwner.lifecycleScope.launch {
             val host = viewModel.getHost(hostId)
             if (host == null) {
@@ -166,6 +171,18 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
                 return@launch
             }
             binding.toolbar.title = host.name
+
+            val currentHost = SSHConnectionManager.getCurrentHost()
+            if (SSHConnectionManager.isConnected() && currentHost?.id == host.id) {
+                SSHConnectionManager.reattachListener(this@TerminalFragment)
+                binding.tvStatus.text = getString(R.string.status_connected)
+                binding.btnConnect.isEnabled = false
+                binding.btnDisconnect.isEnabled = true
+                setTerminalInputEnabled(true)
+                binding.statusIndicator.setBackgroundResource(R.drawable.status_connected)
+                return@launch
+            }
+
             binding.tvStatus.text = getString(R.string.status_connecting_host, host.host)
             binding.btnConnect.isEnabled = false
             SSHConnectionManager.connect(host, SSHToolApp.instance.hostRepository, this@TerminalFragment)

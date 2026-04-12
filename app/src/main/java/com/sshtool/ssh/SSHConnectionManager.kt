@@ -95,6 +95,11 @@ object SSHConnectionManager {
         currentConnection?.updatePtySize(columns, rows)
     }
 
+    fun reattachListener(listener: SSHConnectionListener) {
+        currentListener = listener
+        currentConnection?.listener = listener
+    }
+
     fun disconnect() {
         currentConnection?.destroy()
         currentConnection = null
