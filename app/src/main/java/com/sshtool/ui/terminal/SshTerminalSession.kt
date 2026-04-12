@@ -1,10 +1,14 @@
 package com.sshtool.ui.terminal
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import com.termux.terminal.TerminalEmulator
 import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
 
 class SshTerminalSession(
+    private val context: Context,
     private val outputWriter: (String) -> Unit,
     private val screenUpdater: () -> Unit
 ) : TerminalSessionClient {
@@ -13,7 +17,14 @@ class SshTerminalSession(
         private set
 
     fun create(): TerminalSession {
-        session = TerminalSession("/system/bin/sh", "/", emptyArray(), emptyArray(), 10_000, this)
+        session = TerminalSession(
+            "/system/bin/sh",
+            "/",
+            arrayOf("-c", "while true; do sleep 3600; done"),
+            emptyArray(),
+            10_000,
+            this
+        )
         return session
     }
 
@@ -37,8 +48,19 @@ class SshTerminalSession(
     }
     override fun onTitleChanged(changedSession: TerminalSession) = Unit
     override fun onSessionFinished(finishedSession: TerminalSession) = Unit
-    override fun onCopyTextToClipboard(session: TerminalSession, text: String) = Unit
-    override fun onPasteTextFromClipboard(session: TerminalSession?) = Unit
+
+    override fun onCopyTextToClipboard(session: TerminalSession, text: String) {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("terminal", text))
+    }
+
+    override fun onPasteTextFromClipboard(session: TerminalSession?) {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val text = clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
+        if (text.isNotEmpty()) {
+            outputWriter(text)
+        }
+    }
     override fun onBell(session: TerminalSession) = Unit
     override fun onColorsChanged(changedSession: TerminalSession) = Unit
     override fun onTerminalCursorStateChange(state: Boolean) = Unit
