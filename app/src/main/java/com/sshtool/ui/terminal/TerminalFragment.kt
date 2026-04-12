@@ -72,7 +72,10 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
 
     private fun setupTerminalView() {
         binding.terminalView.setTextSize(14)
-        terminalBridge = SshTerminalSession { data -> sendRawToTerminal(data) }
+        terminalBridge = SshTerminalSession(
+            outputWriter = { data -> sendRawToTerminal(data) },
+            screenUpdater = { binding.terminalView.onScreenUpdated() }
+        )
         terminalSession = terminalBridge.create()
         binding.terminalView.attachSession(terminalSession)
         binding.terminalView.setTerminalViewClient(object : TerminalViewClient {
@@ -171,7 +174,7 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
                     setTerminalInputEnabled(true)
                     binding.statusIndicator.setBackgroundResource(R.drawable.status_connected)
                     terminalBridge.appendSystemMessage(getString(R.string.connection_success))
-                    terminalBridge.appendSystemMessage(getString(R.string.host_key_checking_enabled_notice) + "\n\n")
+                    terminalBridge.appendSystemMessage(getString(R.string.host_key_checking_enabled_notice) + "\r\n\r\n")
                     clearInputField()
                     focusTerminalInput()
                 }

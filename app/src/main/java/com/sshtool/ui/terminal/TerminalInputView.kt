@@ -36,7 +36,18 @@ class TerminalInputView @JvmOverloads constructor(
     }
 
     override fun onTextContextMenuItem(id: Int): Boolean {
-        return super.onTextContextMenuItem(id)
+        return when (id) {
+            android.R.id.paste, android.R.id.pasteAsPlainText -> {
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                val pasted = clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
+                if (pasted.isNotEmpty()) {
+                    callback?.onTextInput(pasted)
+                    clearInternalText()
+                }
+                true
+            }
+            else -> super.onTextContextMenuItem(id)
+        }
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {

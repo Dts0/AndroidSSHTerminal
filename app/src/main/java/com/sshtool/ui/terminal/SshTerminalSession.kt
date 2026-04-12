@@ -5,7 +5,8 @@ import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
 
 class SshTerminalSession(
-    private val outputWriter: (String) -> Unit
+    private val outputWriter: (String) -> Unit,
+    private val screenUpdater: () -> Unit
 ) : TerminalSessionClient {
 
     lateinit var session: TerminalSession
@@ -18,7 +19,8 @@ class SshTerminalSession(
 
     fun appendOutput(data: String) {
         val emulator = session.emulator ?: return
-        emulator.append(data.toByteArray(Charsets.UTF_8), data.toByteArray(Charsets.UTF_8).size)
+        val bytes = data.toByteArray(Charsets.UTF_8)
+        emulator.append(bytes, bytes.size)
         onTextChanged(session)
     }
 
@@ -30,7 +32,9 @@ class SshTerminalSession(
         outputWriter(data)
     }
 
-    override fun onTextChanged(changedSession: TerminalSession) = Unit
+    override fun onTextChanged(changedSession: TerminalSession) {
+        screenUpdater()
+    }
     override fun onTitleChanged(changedSession: TerminalSession) = Unit
     override fun onSessionFinished(finishedSession: TerminalSession) = Unit
     override fun onCopyTextToClipboard(session: TerminalSession, text: String) = Unit

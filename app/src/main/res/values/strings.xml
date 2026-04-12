@@ -36,8 +36,8 @@
     <string name="host_key_confirm_message">即将连接 %1$s:%2$d\n算法：%3$s\n指纹：%4$s\n\n请确认该指纹与服务器端一致后再继续。</string>
     <string name="trust_and_connect">信任并连接</string>
     <string name="host_key_rejected">已取消连接，未信任该主机指纹。</string>
-    <string name="connection_success">=== 连接成功 ===\n</string>
-    <string name="connection_disconnected">=== 连接已断开 ===\n</string>
+    <string name="connection_success">=== 连接成功 ===\r\n</string>
+    <string name="connection_disconnected">=== 连接已断开 ===\r\n</string>
     <string name="status_connecting_host">正在连接 %1$s…</string>
     <string name="status_connecting">正在连接…</string>
     <string name="status_connected">已连接</string>
