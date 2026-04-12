@@ -42,7 +42,7 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
     private var hostId: Long = -1L
     private val handler = Handler(Looper.getMainLooper())
     private var ctrlArmed = false
-    private var terminalFontSize = 14
+    private var terminalFontSize = 14f
     private lateinit var terminalBridge: SshTerminalSession
     private lateinit var terminalSession: TerminalSession
 
@@ -72,7 +72,7 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
     }
 
     private fun setupTerminalView() {
-        binding.terminalView.setTextSize(terminalFontSize)
+        binding.terminalView.setTextSize(terminalFontSize.toInt())
         terminalBridge = SshTerminalSession(
             context = requireContext().applicationContext,
             outputWriter = { data -> sendRawToTerminal(data) },
@@ -82,13 +82,13 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
         binding.terminalView.attachSession(terminalSession)
         binding.terminalView.setTerminalViewClient(object : TerminalViewClient {
             override fun onScale(scale: Float): Float {
-                val newSize = (terminalFontSize * scale).toInt().coerceIn(8, 32)
-                if (newSize != terminalFontSize) {
+                val newSize = (terminalFontSize * scale).coerceIn(8f, 32f)
+                if (kotlin.math.abs(newSize - terminalFontSize) >= 0.25f) {
                     terminalFontSize = newSize
-                    binding.terminalView.setTextSize(terminalFontSize)
+                    binding.terminalView.setTextSize(terminalFontSize.toInt())
                     binding.terminalView.onScreenUpdated()
                 }
-                return terminalFontSize.toFloat()
+                return terminalFontSize
             }
             override fun onSingleTapUp(e: MotionEvent) {
                 focusTerminalInput()
@@ -183,8 +183,10 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
                     binding.btnDisconnect.isEnabled = true
                     setTerminalInputEnabled(true)
                     binding.statusIndicator.setBackgroundResource(R.drawable.status_connected)
-                    terminalBridge.appendSystemMessage(getString(R.string.connection_success))
-                    terminalBridge.appendSystemMessage(getString(R.string.host_key_checking_enabled_notice) + "\r\n\r\n")
+                    appendSystemMessageBlock(
+                        getString(R.string.connection_success),
+                        getString(R.string.host_key_checking_enabled_notice)
+                    )
                     clearInputField()
                     focusTerminalInput()
                 }
@@ -227,7 +229,7 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
             binding.btnConnect.isEnabled = true
             binding.btnDisconnect.isEnabled = false
             setTerminalInputEnabled(false)
-            terminalBridge.appendSystemMessage(getString(R.string.connection_disconnected))
+            appendSystemMessageBlock(getString(R.string.connection_disconnected))
         }
     }
 
@@ -285,6 +287,18 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
     private fun sendRawToTerminal(raw: String) {
         if (!isAdded || _binding == null || !SSHConnectionManager.isConnected()) return
         SSHConnectionManager.getCurrentConnection()?.send(raw)
+    }
+
+    private fun appendSystemMessageBlock(vararg lines: String) {
+        val payload = buildString {
+            lines.forEachIndexed { index, line ->
+                if (index > 0) append("\r\n")
+                append("\r")
+                append(line)
+            }
+            append("\r\n\r\n")
+        }
+        terminalBridge.appendSystemMessage(payload)
     }
 
     private fun clearInputField() {
