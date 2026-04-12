@@ -82,13 +82,13 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
         binding.terminalView.attachSession(terminalSession)
         binding.terminalView.setTerminalViewClient(object : TerminalViewClient {
             override fun onScale(scale: Float): Float {
-                val newSize = (terminalFontSize * scale).coerceIn(8f, 32f)
-                if (kotlin.math.abs(newSize - terminalFontSize) >= 0.25f) {
+                val newSize = (14f * scale).coerceIn(8f, 32f)
+                if (kotlin.math.abs(newSize - terminalFontSize) >= 0.1f) {
                     terminalFontSize = newSize
                     binding.terminalView.setTextSize(terminalFontSize.toInt())
                     binding.terminalView.onScreenUpdated()
                 }
-                return terminalFontSize
+                return terminalFontSize / 14f
             }
             override fun onSingleTapUp(e: MotionEvent) {
                 focusTerminalInput()
