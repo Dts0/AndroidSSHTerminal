@@ -113,7 +113,8 @@ class SSHConnection(
                 channel = session?.openChannel("shell") as? ChannelShell
                 channel?.apply {
                     setPty(true)
-                    setPtyType("vt100")
+                    setEnv("TERM", "xterm-256color")
+                    setPtyType("xterm-256color")
                     setPtySize(120, 40, 0, 0)
                     connect(30000)
                 }
