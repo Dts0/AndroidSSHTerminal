@@ -122,7 +122,8 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
 
         binding.btnCtrl.setOnClickListener {
             ctrlArmed = !ctrlArmed
-            binding.btnCtrl.isChecked = ctrlArmed
+            binding.btnCtrl.isSelected = ctrlArmed
+            binding.btnCtrl.alpha = if (ctrlArmed) 1.0f else 0.75f
         }
         binding.btnTab.setOnClickListener { sendRawToTerminal("\t") }
         binding.btnEsc.setOnClickListener { sendRawToTerminal("\u001B") }
@@ -266,7 +267,8 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
         binding.btnEnd.isEnabled = enabled
         if (!enabled) {
             ctrlArmed = false
-            binding.btnCtrl.isChecked = false
+            binding.btnCtrl.isSelected = false
+            binding.btnCtrl.alpha = 0.75f
             clearInputField()
         }
     }
@@ -275,7 +277,8 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
         if (!SSHConnectionManager.isConnected()) return
         val payload = if (ctrlArmed && text.isNotEmpty()) {
             ctrlArmed = false
-            binding.btnCtrl.isChecked = false
+            binding.btnCtrl.isSelected = false
+            binding.btnCtrl.alpha = 0.75f
             text.map { ch ->
                 val asciiCode = ch.code and 0x7F
                 if (asciiCode in 64..95 || asciiCode in 97..122) (asciiCode and 0x1F).toChar() else ch
