@@ -325,7 +325,7 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
     }
 
     override fun onEnter() {
-        sendRawToTerminal("\n")
+        sendRawToTerminal("\r")
         clearInputField()
     }
 
