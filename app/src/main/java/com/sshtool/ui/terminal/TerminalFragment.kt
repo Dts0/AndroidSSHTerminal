@@ -42,6 +42,7 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
     private var hostId: Long = -1L
     private val handler = Handler(Looper.getMainLooper())
     private var ctrlArmed = false
+    private var terminalFontSize = 14
     private lateinit var terminalBridge: SshTerminalSession
     private lateinit var terminalSession: TerminalSession
 
@@ -71,7 +72,7 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
     }
 
     private fun setupTerminalView() {
-        binding.terminalView.setTextSize(14)
+        binding.terminalView.setTextSize(terminalFontSize)
         terminalBridge = SshTerminalSession(
             context = requireContext().applicationContext,
             outputWriter = { data -> sendRawToTerminal(data) },
@@ -80,7 +81,15 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
         terminalSession = terminalBridge.create()
         binding.terminalView.attachSession(terminalSession)
         binding.terminalView.setTerminalViewClient(object : TerminalViewClient {
-            override fun onScale(scale: Float): Float = 1.0f
+            override fun onScale(scale: Float): Float {
+                val newSize = (terminalFontSize * scale).toInt().coerceIn(8, 32)
+                if (newSize != terminalFontSize) {
+                    terminalFontSize = newSize
+                    binding.terminalView.setTextSize(terminalFontSize)
+                    binding.terminalView.onScreenUpdated()
+                }
+                return terminalFontSize.toFloat()
+            }
             override fun onSingleTapUp(e: MotionEvent) {
                 focusTerminalInput()
             }
