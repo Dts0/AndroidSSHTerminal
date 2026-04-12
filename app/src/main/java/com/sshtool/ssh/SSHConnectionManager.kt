@@ -3,6 +3,9 @@ package com.sshtool.ssh
 import com.sshtool.SSHToolApp
 import com.sshtool.data.model.Host
 import com.sshtool.data.repository.HostRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 /**
  * SSH 连接管理器（单例）
@@ -39,6 +42,23 @@ object SSHConnectionManager {
             repository.getPassphrase(host.id)
         } else null
         
+        val wrappedListener = object : SSHConnectionListener {
+            override fun onStateChanged(state: SSHConnectionState) {
+                if (state is SSHConnectionState.Connected) {
+                    kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launchUpdateLastConnected(repository, host.id)
+                }
+                listener.onStateChanged(state)
+            }
+
+            override fun onOutput(data: String) {
+                listener.onOutput(data)
+            }
+
+            override fun onDisconnected() {
+                listener.onDisconnected()
+            }
+        }
+
         // 创建新连接
         currentConnection = SSHConnection(
             context = SSHToolApp.instance.applicationContext,
@@ -50,12 +70,9 @@ object SSHConnectionManager {
             privateKey = privateKey,
             passphrase = passphrase
         ).apply {
-            this.listener = listener
+            this.listener = wrappedListener
         }
         currentHost = host
-        
-        // 更新最后连接时间
-        repository.updateLastConnected(host.id)
         
         // 建立连接
         currentConnection?.connect()
@@ -81,4 +98,13 @@ object SSHConnectionManager {
     }
 
     fun isConnected(): Boolean = currentConnection?.isConnected == true
+}
+
+private fun CoroutineScope.launchUpdateLastConnected(
+    repository: HostRepository,
+    hostId: Long
+) {
+    launch {
+        repository.updateLastConnected(hostId)
+    }
 }

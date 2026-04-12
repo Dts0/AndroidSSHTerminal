@@ -95,8 +95,8 @@ class HostEditorFragment : Fragment() {
                     
                     if (host.useKeyAuth) {
                         toggleAuthType.check(R.id.btn_key)
-                        etPrivateKey.setText(host.privateKey ?: "")
-                        etPassphrase.setText(host.passphrase ?: "")
+                        etPrivateKey.setText("")
+                        etPassphrase.setText("")
                         layoutPassword.hint = getString(R.string.password)
                         (layoutPrivateKey.getChildAt(0) as? com.google.android.material.textfield.TextInputLayout)
                             ?.hint = getString(R.string.private_key_optional_keep)
@@ -104,7 +104,7 @@ class HostEditorFragment : Fragment() {
                             ?.hint = getString(R.string.passphrase_optional_keep)
                     } else {
                         toggleAuthType.check(R.id.btn_password)
-                        etPassword.setText(host.password ?: "")
+                        etPassword.setText("")
                         layoutPassword.hint = getString(R.string.password_optional_keep)
                     }
                 }

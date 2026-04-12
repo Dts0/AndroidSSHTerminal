@@ -71,6 +71,7 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
     }
 
     private fun setupTerminalView() {
+        binding.terminalView.setTextSize(14)
         terminalBridge = SshTerminalSession { data -> sendRawToTerminal(data) }
         terminalSession = terminalBridge.create()
         binding.terminalView.attachSession(terminalSession)

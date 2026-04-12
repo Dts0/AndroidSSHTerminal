@@ -58,6 +58,9 @@ class SSHConnection(
     
     var listener: SSHConnectionListener? = null
     
+    @Volatile
+    private var disconnected = false
+    
     val isConnected: Boolean
         get() = session?.isConnected == true
 
@@ -208,21 +211,31 @@ class SSHConnection(
     }
 
     /**
-     * 断开连接
+     * 断开连接（幂等）
      */
     fun disconnect() {
-        readerJob?.cancel()
-        readerJob = null
+        if (disconnected) return
+        disconnected = true
+        
+        // 先关闭 inputStream，打断阻塞中的 read()
         try {
             inputStream?.close()
         } catch (_: Exception) {
         }
+        readerJob?.cancel()
+        readerJob = null
         try {
             outputStream?.close()
         } catch (_: Exception) {
         }
-        channel?.disconnect()
-        session?.disconnect()
+        try {
+            channel?.disconnect()
+        } catch (_: Exception) {
+        }
+        try {
+            session?.disconnect()
+        } catch (_: Exception) {
+        }
         channel = null
         session = null
         inputStream = null

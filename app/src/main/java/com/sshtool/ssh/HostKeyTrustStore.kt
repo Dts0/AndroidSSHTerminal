@@ -21,14 +21,14 @@ open class HostKeyStoreBackend(
     fun isTrusted(host: String, port: Int, algorithm: String, key: String): Boolean {
         val expected = fingerprint(key)
         return loadEntries().any {
-            it.host == host && it.port == port && it.algorithm == algorithm && it.fingerprint == expected
+            it.host == host && it.port == port && it.fingerprint == expected
         }
     }
 
     fun trust(host: String, port: Int, algorithm: String, key: String) {
         val fingerprint = fingerprint(key)
         val entries = loadEntries().filterNot {
-            it.host == host && it.port == port && it.algorithm == algorithm
+            it.host == host && it.port == port
         }.toMutableList()
         entries += Entry(host, port, algorithm, fingerprint)
         storeFile.writeText(entries.joinToString(separator = "\n") { "${it.host}\t${it.port}\t${it.algorithm}\t${it.fingerprint}" } + "\n")
