@@ -994,6 +994,7 @@ public final class TerminalView extends View {
             mTermSession.updateSize(newColumns, newRows, (int) mRenderer.getFontWidth(), mRenderer.getFontLineSpacing());
             mEmulator = mTermSession.getEmulator();
             mClient.onEmulatorSet();
+            mClient.onTerminalSizeChanged(newColumns, newRows);
 
             // Update mTerminalCursorBlinkerRunnable inner class mEmulator on session change
             if (mTerminalCursorBlinkerRunnable != null)

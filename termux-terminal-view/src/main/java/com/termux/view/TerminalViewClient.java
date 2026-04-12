@@ -65,6 +65,7 @@ public interface TerminalViewClient {
 
     void onEmulatorSet();
 
+    void onTerminalSizeChanged(int columns, int rows);
 
     void logError(String tag, String message);
 

@@ -107,6 +107,9 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
             override fun readFnKey(): Boolean = false
             override fun onCodePoint(codePoint: Int, ctrlDown: Boolean, session: TerminalSession): Boolean = false
             override fun onEmulatorSet() = Unit
+            override fun onTerminalSizeChanged(columns: Int, rows: Int) {
+                SSHConnectionManager.updatePtySize(columns, rows)
+            }
             override fun logError(tag: String, message: String) = Unit
             override fun logWarn(tag: String, message: String) = Unit
             override fun logInfo(tag: String, message: String) = Unit

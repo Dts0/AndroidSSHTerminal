@@ -211,6 +211,16 @@ class SSHConnection(
         }
     }
 
+    fun updatePtySize(columns: Int, rows: Int) {
+        scope.launch {
+            try {
+                channel?.setPtySize(columns, rows, 0, 0)
+            } catch (_: Exception) {
+                // Ignore transient resize failures.
+            }
+        }
+    }
+
     /**
      * 断开连接（幂等）
      */

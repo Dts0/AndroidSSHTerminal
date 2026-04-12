@@ -91,6 +91,10 @@ object SSHConnectionManager {
         }
     }
 
+    fun updatePtySize(columns: Int, rows: Int) {
+        currentConnection?.updatePtySize(columns, rows)
+    }
+
     fun disconnect() {
         currentConnection?.destroy()
         currentConnection = null
