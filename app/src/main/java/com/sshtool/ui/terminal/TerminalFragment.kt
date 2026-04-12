@@ -212,7 +212,7 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
         }
     }
 
-    override fun onOutput(data: String) {
+    override fun onOutput(data: ByteArray) {
         handler.post {
             if (!isAdded || _binding == null) return@post
             terminalBridge.appendOutput(data)

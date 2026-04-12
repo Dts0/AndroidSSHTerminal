@@ -29,7 +29,7 @@ sealed class SSHConnectionState {
  */
 interface SSHConnectionListener {
     fun onStateChanged(state: SSHConnectionState)
-    fun onOutput(data: String)
+    fun onOutput(data: ByteArray)
     fun onDisconnected()
 }
 
@@ -176,7 +176,7 @@ class SSHConnection(
                         break
                     }
                     if (len > 0) {
-                        val data = String(buffer, 0, len, Charsets.UTF_8)
+                        val data = buffer.copyOfRange(0, len)
                         withContext(Dispatchers.Main) {
                             listener?.onOutput(data)
                         }

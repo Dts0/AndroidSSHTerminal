@@ -28,15 +28,10 @@ class SshTerminalSession(
         return session
     }
 
-    fun appendOutput(data: String) {
+    fun appendOutput(data: ByteArray) {
         val emulator = session.emulator ?: return
-        val bytes = data.toByteArray(Charsets.UTF_8)
-        emulator.append(bytes, bytes.size)
+        emulator.append(data, data.size)
         onTextChanged(session)
-    }
-
-    fun appendSystemMessage(data: String) {
-        appendOutput(data)
     }
 
     fun write(data: String) {
