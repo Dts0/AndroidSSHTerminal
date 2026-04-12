@@ -43,6 +43,9 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
     private val handler = Handler(Looper.getMainLooper())
     private var ctrlArmed = false
     private var terminalFontSize = 14f
+    private val terminalLayoutListener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+        syncRemotePtySize()
+    }
     private lateinit var terminalBridge: SshTerminalSession
     private lateinit var terminalSession: TerminalSession
 
@@ -80,6 +83,8 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
         )
         terminalSession = terminalBridge.create()
         binding.terminalView.attachSession(terminalSession)
+        binding.terminalView.addOnLayoutChangeListener(terminalLayoutListener)
+        binding.terminalView.post { syncRemotePtySize() }
         binding.terminalView.setTerminalViewClient(object : TerminalViewClient {
             override fun onScale(scale: Float): Float {
                 val newSize = (14f * scale).coerceIn(8f, 32f)
@@ -87,6 +92,7 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
                     terminalFontSize = newSize
                     binding.terminalView.setTextSize(terminalFontSize.toInt())
                     binding.terminalView.onScreenUpdated()
+                    binding.terminalView.post { syncRemotePtySize() }
                 }
                 return terminalFontSize / 14f
             }
@@ -106,7 +112,9 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
             override fun readShiftKey(): Boolean = false
             override fun readFnKey(): Boolean = false
             override fun onCodePoint(codePoint: Int, ctrlDown: Boolean, session: TerminalSession): Boolean = false
-            override fun onEmulatorSet() = Unit
+            override fun onEmulatorSet() {
+                binding.terminalView.post { syncRemotePtySize() }
+            }
             override fun logError(tag: String, message: String) = Unit
             override fun logWarn(tag: String, message: String) = Unit
             override fun logInfo(tag: String, message: String) = Unit
@@ -122,7 +130,8 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
 
         binding.btnCtrl.setOnClickListener {
             ctrlArmed = !ctrlArmed
-            binding.btnCtrl.isChecked = ctrlArmed
+            binding.btnCtrl.isSelected = ctrlArmed
+            binding.btnCtrl.alpha = if (ctrlArmed) 1.0f else 0.75f
         }
         binding.btnTab.setOnClickListener { sendRawToTerminal("\t") }
         binding.btnEsc.setOnClickListener { sendRawToTerminal("\u001B") }
@@ -183,10 +192,7 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
                     binding.btnDisconnect.isEnabled = true
                     setTerminalInputEnabled(true)
                     binding.statusIndicator.setBackgroundResource(R.drawable.status_connected)
-                    appendSystemMessageBlock(
-                        getString(R.string.connection_success),
-                        getString(R.string.host_key_checking_enabled_notice)
-                    )
+                    Toast.makeText(requireContext(), getString(R.string.host_key_checking_enabled_notice), Toast.LENGTH_SHORT).show()
                     clearInputField()
                     focusTerminalInput()
                 }
@@ -215,7 +221,7 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
         }
     }
 
-    override fun onOutput(data: String) {
+    override fun onOutput(data: ByteArray) {
         handler.post {
             if (!isAdded || _binding == null) return@post
             terminalBridge.appendOutput(data)
@@ -229,7 +235,6 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
             binding.btnConnect.isEnabled = true
             binding.btnDisconnect.isEnabled = false
             setTerminalInputEnabled(false)
-            appendSystemMessageBlock(getString(R.string.connection_disconnected))
         }
     }
 
@@ -266,7 +271,8 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
         binding.btnEnd.isEnabled = enabled
         if (!enabled) {
             ctrlArmed = false
-            binding.btnCtrl.isChecked = false
+            binding.btnCtrl.isSelected = false
+            binding.btnCtrl.alpha = 0.75f
             clearInputField()
         }
     }
@@ -275,7 +281,8 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
         if (!SSHConnectionManager.isConnected()) return
         val payload = if (ctrlArmed && text.isNotEmpty()) {
             ctrlArmed = false
-            binding.btnCtrl.isChecked = false
+            binding.btnCtrl.isSelected = false
+            binding.btnCtrl.alpha = 0.75f
             text.map { ch ->
                 val asciiCode = ch.code and 0x7F
                 if (asciiCode in 64..95 || asciiCode in 97..122) (asciiCode and 0x1F).toChar() else ch
@@ -289,16 +296,10 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
         SSHConnectionManager.getCurrentConnection()?.send(raw)
     }
 
-    private fun appendSystemMessageBlock(vararg lines: String) {
-        val payload = buildString {
-            lines.forEachIndexed { index, line ->
-                if (index > 0) append("\r\n")
-                append("\r")
-                append(line)
-            }
-            append("\r\n\r\n")
-        }
-        terminalBridge.appendSystemMessage(payload)
+    private fun syncRemotePtySize() {
+        if (!::terminalSession.isInitialized) return
+        val emulator = terminalSession.emulator ?: return
+        SSHConnectionManager.getCurrentConnection()?.updatePtySize(emulator.mColumns, emulator.mRows)
     }
 
     private fun clearInputField() {
@@ -343,6 +344,7 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
     override fun onDestroyView() {
         super.onDestroyView()
         handler.removeCallbacksAndMessages(null)
+        binding.terminalView.removeOnLayoutChangeListener(terminalLayoutListener)
         if (::terminalSession.isInitialized) terminalSession.finishIfRunning()
         _binding = null
     }

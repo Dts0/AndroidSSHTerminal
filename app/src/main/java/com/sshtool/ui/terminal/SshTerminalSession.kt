@@ -20,7 +20,7 @@ class SshTerminalSession(
         session = TerminalSession(
             "/system/bin/sleep",
             "/",
-            arrayOf("sleep", "3600"),
+            arrayOf("sleep", "315360000"),
             emptyArray(),
             10_000,
             this
@@ -28,15 +28,14 @@ class SshTerminalSession(
         return session
     }
 
-    fun appendOutput(data: String) {
+    fun appendOutput(data: ByteArray) {
         val emulator = session.emulator ?: return
-        val bytes = data.toByteArray(Charsets.UTF_8)
-        emulator.append(bytes, bytes.size)
+        emulator.append(data, data.size)
         onTextChanged(session)
     }
 
     fun appendSystemMessage(data: String) {
-        appendOutput(data)
+        appendOutput(data.toByteArray(Charsets.UTF_8))
     }
 
     fun write(data: String) {

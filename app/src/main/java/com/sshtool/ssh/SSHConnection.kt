@@ -29,7 +29,7 @@ sealed class SSHConnectionState {
  */
 interface SSHConnectionListener {
     fun onStateChanged(state: SSHConnectionState)
-    fun onOutput(data: String)
+    fun onOutput(data: ByteArray)
     fun onDisconnected()
 }
 
@@ -113,7 +113,8 @@ class SSHConnection(
                 channel = session?.openChannel("shell") as? ChannelShell
                 channel?.apply {
                     setPty(true)
-                    setPtyType("vt100")
+                    setEnv("TERM", "xterm-256color")
+                    setPtyType("xterm-256color")
                     setPtySize(120, 40, 0, 0)
                     connect(30000)
                 }
@@ -175,7 +176,7 @@ class SSHConnection(
                         break
                     }
                     if (len > 0) {
-                        val data = String(buffer, 0, len, Charsets.UTF_8)
+                        val data = buffer.copyOfRange(0, len)
                         withContext(Dispatchers.Main) {
                             listener?.onOutput(data)
                         }
@@ -210,6 +211,15 @@ class SSHConnection(
         }
     }
 
+
+    fun updatePtySize(columns: Int, rows: Int) {
+        try {
+            if (columns > 0 && rows > 0) {
+                channel?.setPtySize(columns, rows, 0, 0)
+            }
+        } catch (_: Exception) {
+        }
+    }
     /**
      * 断开连接（幂等）
      */

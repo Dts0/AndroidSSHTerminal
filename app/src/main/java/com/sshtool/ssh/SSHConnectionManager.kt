@@ -50,7 +50,7 @@ object SSHConnectionManager {
                 listener.onStateChanged(state)
             }
 
-            override fun onOutput(data: String) {
+            override fun onOutput(data: ByteArray) {
                 listener.onOutput(data)
             }
 
