@@ -69,6 +69,11 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
     private fun setupToolbar() {
         binding.toolbar.setNavigationOnClickListener { leaveScreen() }
         binding.toolbar.title = getString(R.string.app_name)
+        setToolbarVisible(true)
+    }
+
+    private fun setToolbarVisible(isVisible: Boolean) {
+        binding.toolbar.visibility = if (isVisible) View.VISIBLE else View.GONE
     }
 
     private fun setupTerminalView() {
@@ -180,6 +185,7 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
                 binding.btnDisconnect.isEnabled = true
                 setTerminalInputEnabled(true)
                 binding.statusIndicator.setBackgroundResource(R.drawable.status_connected)
+                setToolbarVisible(false)
                 return@launch
             }
 
@@ -194,11 +200,14 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
             if (!isAdded || _binding == null) return@post
             when (state) {
                 is SSHConnectionState.Connecting -> {
+                    setToolbarVisible(true)
                     binding.tvStatus.text = getString(R.string.status_connecting)
                     binding.btnConnect.isEnabled = false
+                    binding.btnDisconnect.isEnabled = false
                     binding.statusIndicator.setBackgroundResource(R.drawable.status_connecting)
                 }
                 is SSHConnectionState.Connected -> {
+                    setToolbarVisible(false)
                     binding.tvStatus.text = getString(R.string.status_connected)
                     binding.btnConnect.isEnabled = false
                     binding.btnDisconnect.isEnabled = true
@@ -208,20 +217,25 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
                     focusTerminalInput()
                 }
                 is SSHConnectionState.HostKeyConfirmationRequired -> {
+                    setToolbarVisible(true)
                     binding.tvStatus.text = getString(R.string.status_error, state.fingerprint)
                     binding.btnConnect.isEnabled = true
+                    binding.btnDisconnect.isEnabled = false
                     setTerminalInputEnabled(false)
                     binding.statusIndicator.setBackgroundResource(R.drawable.status_error)
                     showHostKeyDialog(state)
                 }
                 is SSHConnectionState.Error -> {
+                    setToolbarVisible(true)
                     binding.tvStatus.text = getString(R.string.status_error, state.message)
                     binding.btnConnect.isEnabled = true
+                    binding.btnDisconnect.isEnabled = false
                     setTerminalInputEnabled(false)
                     binding.statusIndicator.setBackgroundResource(R.drawable.status_error)
                     Toast.makeText(requireContext(), state.message, Toast.LENGTH_LONG).show()
                 }
                 is SSHConnectionState.Disconnected -> {
+                    setToolbarVisible(true)
                     binding.tvStatus.text = getString(R.string.status_disconnected)
                     binding.btnConnect.isEnabled = true
                     binding.btnDisconnect.isEnabled = false
@@ -242,6 +256,7 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
     override fun onDisconnected() {
         handler.post {
             if (!isAdded || _binding == null || isLeavingScreen) return@post
+            setToolbarVisible(true)
             binding.tvStatus.text = getString(R.string.status_connection_closed)
             binding.btnConnect.isEnabled = true
             binding.btnDisconnect.isEnabled = false
@@ -290,15 +305,19 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
 
     private fun sendTextToTerminal(text: String) {
         if (!SSHConnectionManager.isConnected()) return
-        val payload = if (ctrlArmed && text.isNotEmpty()) {
+        val normalizedText = text
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .replace('\n', '\r')
+        val payload = if (ctrlArmed && normalizedText.isNotEmpty()) {
             ctrlArmed = false
             binding.btnCtrl.isSelected = false
             binding.btnCtrl.alpha = 0.75f
-            text.map { ch ->
+            normalizedText.map { ch ->
                 val asciiCode = ch.code and 0x7F
                 if (asciiCode in 64..95 || asciiCode in 97..122) (asciiCode and 0x1F).toChar() else ch
             }.joinToString(separator = "")
-        } else text
+        } else normalizedText
         sendRawToTerminal(payload)
     }
 
@@ -331,7 +350,7 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
     }
 
     override fun onEnter() {
-        sendRawToTerminal("\r")
+        sendTextToTerminal("\n")
         clearInputField()
     }
 
@@ -344,6 +363,32 @@ class TerminalFragment : Fragment(), SSHConnectionListener, TerminalInputView.Ca
         isLeavingScreen = true
         SSHConnectionManager.disconnect()
         findNavController().navigateUp()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (_binding == null) return
+
+        val currentHost = SSHConnectionManager.getCurrentHost()
+        val stillSameHost = currentHost?.id == hostId
+        val connected = SSHConnectionManager.isConnected()
+
+        if (stillSameHost && connected) {
+            setToolbarVisible(false)
+            binding.tvStatus.text = getString(R.string.status_connected)
+            binding.btnConnect.isEnabled = false
+            binding.btnDisconnect.isEnabled = true
+            setTerminalInputEnabled(true)
+            binding.statusIndicator.setBackgroundResource(R.drawable.status_connected)
+            focusTerminalInput()
+        } else {
+            setToolbarVisible(true)
+            binding.tvStatus.text = getString(R.string.status_disconnected)
+            binding.btnConnect.isEnabled = true
+            binding.btnDisconnect.isEnabled = false
+            setTerminalInputEnabled(false)
+            binding.statusIndicator.setBackgroundResource(R.drawable.status_disconnected)
+        }
     }
 
     override fun onDestroyView() {
