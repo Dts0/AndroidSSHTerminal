@@ -292,7 +292,9 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
         sessionStates.add(s)
         addTabFor(host, "")
         activeIndex = idx
-        binding.tabLayout.getTabAt(idx)?.select()
+        binding.tabLayout.post {
+            binding.tabLayout.getTabAt(idx)?.select()
+        }
         binding.terminalView.attachSession(s.terminalSession)
         binding.toolbar.title = host.name
         applyConnectionState(SSHConnectionState.Connecting)
