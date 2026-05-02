@@ -183,11 +183,12 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
     }
 
     private fun setupTabLayout() {
+        ensureAddTab()
         binding.tabLayout.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
             override fun onTabSelected(tab: TabLayout.Tab) {
                 if (tab.tag == "+") {
                     binding.tabLayout.selectTab(null)
-                    findNavController().navigate(R.id.hostListFragment)
+                    findNavController().navigateUp()
                     return
                 }
                 val index = tab.position

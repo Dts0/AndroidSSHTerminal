@@ -104,7 +104,8 @@
         android:textSize="0sp"
         app:layout_constraintBottom_toTopOf="@id/input_container"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent" />
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/status_bar" />
 
     <LinearLayout
         android:id="@+id/input_container"
