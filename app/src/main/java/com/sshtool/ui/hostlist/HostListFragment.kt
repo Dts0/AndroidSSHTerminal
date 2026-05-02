@@ -52,9 +52,15 @@ class HostListFragment : Fragment() {
     private fun setupRecyclerView() {
         adapter = HostListAdapter(
             onItemClick = { host ->
-                val action = HostListFragmentDirections
-                    .actionHostListToTerminal(host.id)
-                findNavController().navigate(action)
+                val previousEntry = findNavController().previousBackStackEntry
+                if (previousEntry?.destination?.id == R.id.terminalFragment) {
+                    previousEntry.savedStateHandle.set("selected_host", host.id)
+                    findNavController().navigateUp()
+                } else {
+                    val action = HostListFragmentDirections
+                        .actionHostListToTerminal(host.id)
+                    findNavController().navigate(action)
+                }
             },
             onItemLongClick = { host ->
                 val action = HostListFragmentDirections

@@ -6,46 +6,71 @@ import com.sshtool.data.repository.HostRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 /**
- * SSH 连接管理器（单例）
+ * 多会话 SSH 连接管理器
  */
-object SSHConnectionManager {
-    
-    private var currentConnection: SSHConnection? = null
-    private var currentHost: Host? = null
-    private var currentListener: SSHConnectionListener? = null
+class SSHConnectionManager {
 
-    fun getCurrentConnection(): SSHConnection? = currentConnection
-    fun getCurrentHost(): Host? = currentHost
+    data class SessionInfo(
+        val id: String,
+        val host: Host,
+        val connection: SSHConnection,
+        var listener: SSHConnectionListener
+    )
+
+    private val sessions = linkedMapOf<String, SessionInfo>()
+    private var activeSessionId: String? = null
+
+    val activeConnection: SSHConnection?
+        get() = activeSessionId?.let { sessions[it]?.connection }
+
+    val activeHost: Host?
+        get() = activeSessionId?.let { sessions[it]?.host }
+
+    val sessionCount: Int
+        get() = sessions.size
+
+    fun getSessionIds(): List<String> = sessions.keys.toList()
+
+    fun getSession(id: String): SessionInfo? = sessions[id]
+
+    fun getActiveSessionId(): String? = activeSessionId
+
+    fun isActiveConnected(): Boolean = activeConnection?.isConnected == true
+
+    fun isSessionConnected(id: String): Boolean = sessions[id]?.connection?.isConnected == true
+
+    fun switchSession(id: String) {
+        if (sessions.containsKey(id)) {
+            activeSessionId = id
+        }
+    }
 
     suspend fun connect(
         host: Host,
         repository: HostRepository,
         listener: SSHConnectionListener
-    ) {
-        // 断开现有连接
-        disconnect()
-        
-        currentListener = listener
+    ): String {
+        val sessionId = UUID.randomUUID().toString()
 
-        // 获取加密的凭据
         val password = if (!host.useKeyAuth) {
             repository.getPassword(host.id) ?: host.password
         } else null
-        
+
         val privateKey = if (host.useKeyAuth) {
             repository.getPrivateKey(host.id) ?: host.privateKey
         } else null
-        
+
         val passphrase = if (host.useKeyAuth) {
             repository.getPassphrase(host.id)
         } else null
-        
+
         val wrappedListener = object : SSHConnectionListener {
             override fun onStateChanged(state: SSHConnectionState) {
                 if (state is SSHConnectionState.Connected) {
-                    kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launchUpdateLastConnected(repository, host.id)
+                    CoroutineScope(Dispatchers.IO).launchUpdateLastConnected(repository, host.id)
                 }
                 listener.onStateChanged(state)
             }
@@ -59,8 +84,7 @@ object SSHConnectionManager {
             }
         }
 
-        // 创建新连接
-        currentConnection = SSHConnection(
+        val connection = SSHConnection(
             context = SSHToolApp.instance.applicationContext,
             hostAddress = host.host,
             hostPort = host.port,
@@ -69,44 +93,62 @@ object SSHConnectionManager {
             password = password,
             privateKey = privateKey,
             passphrase = passphrase
-        ).apply {
-            this.listener = wrappedListener
-        }
-        currentHost = host
-        
-        // 建立连接
-        currentConnection?.connect()
+        ).apply { this.listener = wrappedListener }
+
+        sessions[sessionId] = SessionInfo(
+            id = sessionId,
+            host = host,
+            connection = connection,
+            listener = wrappedListener
+        )
+        activeSessionId = sessionId
+
+        connection.connect()
+        return sessionId
     }
 
-    suspend fun trustCurrentHostAndReconnect(repository: HostRepository) {
-        val host = currentHost ?: return
-        val listener = currentListener ?: return
-        val trusted = currentConnection?.trustCurrentHostKey() == true
-        currentConnection?.destroy()
-        currentConnection = null
+    suspend fun trustAndReconnect(sessionId: String, repository: HostRepository) {
+        val session = sessions[sessionId] ?: return
+        val host = session.host
+        val currentListener = session.listener
+        val trusted = session.connection.trustCurrentHostKey()
+        session.connection.destroy()
+        sessions.remove(sessionId)
+        if (activeSessionId == sessionId) activeSessionId = null
         if (trusted) {
-            connect(host, repository, listener)
+            connect(host, repository, currentListener)
         } else {
-            listener.onStateChanged(SSHConnectionState.Error("无法保存主机指纹"))
+            currentListener.onStateChanged(SSHConnectionState.Error("无法保存主机指纹"))
         }
     }
 
     fun updatePtySize(columns: Int, rows: Int) {
-        currentConnection?.updatePtySize(columns, rows)
+        activeConnection?.updatePtySize(columns, rows)
     }
 
-    fun reattachListener(listener: SSHConnectionListener) {
-        currentListener = listener
-        currentConnection?.listener = listener
+    fun reattachListener(sessionId: String, listener: SSHConnectionListener) {
+        val session = sessions[sessionId] ?: return
+        session.listener = listener
+        session.connection.listener = listener
     }
 
-    fun disconnect() {
-        currentConnection?.destroy()
-        currentConnection = null
-        currentHost = null
+    fun disconnect(sessionId: String) {
+        val session = sessions.remove(sessionId) ?: return
+        session.connection.destroy()
+        if (activeSessionId == sessionId) {
+            activeSessionId = if (sessions.isNotEmpty()) sessions.keys.last() else null
+        }
     }
 
-    fun isConnected(): Boolean = currentConnection?.isConnected == true
+    fun disconnectAll() {
+        sessions.values.forEach { it.connection.destroy() }
+        sessions.clear()
+        activeSessionId = null
+    }
+
+    companion object {
+        val instance = SSHConnectionManager()
+    }
 }
 
 private fun CoroutineScope.launchUpdateLastConnected(

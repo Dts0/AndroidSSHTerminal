@@ -17,6 +17,20 @@
         app:navigationIcon="@drawable/ic_back"
         app:titleTextColor="@android:color/white" />
 
+    <com.google.android.material.tabs.TabLayout
+        android:id="@+id/tab_layout"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:background="#2D2D2D"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/toolbar"
+        app:tabIndicatorColor="#4FC3F7"
+        app:tabMode="scrollable"
+        app:tabRippleColor="#33FFFFFF"
+        app:tabSelectedTextColor="@android:color/white"
+        app:tabTextColor="#AAAAAA" />
+
     <LinearLayout
         android:id="@+id/status_bar"
         android:layout_width="0dp"
@@ -27,7 +41,7 @@
         android:padding="8dp"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/toolbar">
+        app:layout_constraintTop_toBottomOf="@id/tab_layout">
 
         <View
             android:id="@+id/status_indicator"
