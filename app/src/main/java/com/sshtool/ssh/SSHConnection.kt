@@ -188,7 +188,7 @@ class SSHConnection(
             } catch (_: Exception) {
                 // ignore, disconnect path below handles state reporting
             } finally {
-                if (session?.isConnected == true || channel?.isConnected == true) {
+                if (!disconnected) {
                     withContext(Dispatchers.Main) {
                         disconnect()
                     }

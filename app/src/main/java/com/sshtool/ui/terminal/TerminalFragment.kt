@@ -219,11 +219,26 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
     }
 
     private fun addTabFor(host: Host, sessionId: String) {
+        val displayName = dedupHostName(host.name)
         val tab = binding.tabLayout.newTab()
-            .setText(host.name)
+            .setText(displayName)
             .setTag(sessionId)
-        binding.tabLayout.addTab(tab, sessionStates.size)
+        // Insert before the "+" tab (always last)
+        val insertPos = binding.tabLayout.tabCount - 1
+        binding.tabLayout.addTab(tab, insertPos.coerceAtLeast(0))
         ensureAddTab()
+    }
+
+    private fun dedupHostName(name: String): String {
+        val existing = (0 until binding.tabLayout.tabCount)
+            .mapNotNull { binding.tabLayout.getTabAt(it)?.text?.toString() }
+            .filter { it == name || it.startsWith("$name (") }
+        if (existing.isEmpty()) return name
+        var counter = 2
+        while ("$name ($counter)" in existing) {
+            counter++
+        }
+        return "$name ($counter)"
     }
 
     private fun ensureAddTab() {
@@ -325,9 +340,78 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
 
     private fun reconnectActive() {
         val state = getActiveState() ?: return
+        // Clean up old terminal session
+        state.terminalSession.finishIfRunning()
+        state.connectionState = SSHConnectionState.Connecting
+        applyConnectionState(SSHConnectionState.Connecting)
+
+        // Create fresh bridge + terminal session for the existing state
+        val newBridge = SshTerminalSession(
+            context = requireContext().applicationContext,
+            outputWriter = { data -> sendRawToTerminal(data) },
+            screenUpdater = {
+                val currentBinding = _binding ?: return@SshTerminalSession
+                if (!isAdded) return@SshTerminalSession
+                currentBinding.terminalView.onScreenUpdated()
+            }
+        )
+        val newTermSession = newBridge.create()
+
+        // Re-register the session in the manager
         viewLifecycleOwner.lifecycleScope.launch {
             val host = viewModel.getHost(state.host.id) ?: return@launch
-            connectNewSession(host)
+            // Remove old connection from manager
+            if (state.sessionId.isNotEmpty()) {
+                manager.disconnect(state.sessionId)
+            }
+            // Update state with new bridge/session but same index/tab
+            val idx = sessionStates.indexOf(state)
+            if (idx < 0) return@launch
+            
+            val listener = object : SSHConnectionListener {
+                override fun onStateChanged(connState: SSHConnectionState) {
+                    handler.post {
+                        if (!isAdded || _binding == null) return@post
+                        state.connectionState = connState
+                        updateTabIndicator(idx, connState)
+                        if (idx == activeIndex) {
+                            applyConnectionState(connState)
+                        }
+                    }
+                }
+                override fun onOutput(data: ByteArray) {
+                    handler.post {
+                        if (!isAdded || _binding == null) return@post
+                        newBridge.appendOutput(data)
+                    }
+                }
+                override fun onDisconnected() {
+                    handler.post {
+                        if (!isAdded || _binding == null || isLeavingScreen) return@post
+                        state.connectionState = SSHConnectionState.Disconnected
+                        updateTabIndicator(idx, SSHConnectionState.Disconnected)
+                        if (idx == activeIndex) {
+                            applyConnectionState(SSHConnectionState.Disconnected)
+                        }
+                    }
+                }
+            }
+
+            val sessionId = manager.connect(host, SSHToolApp.instance.hostRepository, listener)
+            // Update the state in place
+            val sIdx = sessionStates.indexOf(state)
+            if (sIdx >= 0) {
+                sessionStates[sIdx] = SessionState(
+                    sessionId = sessionId,
+                    host = host,
+                    bridge = newBridge,
+                    terminalSession = newTermSession,
+                    connectionState = SSHConnectionState.Connecting
+                )
+            }
+            binding.terminalView.attachSession(newTermSession)
+            val tab = binding.tabLayout.getTabAt(idx)
+            tab?.tag = sessionId
         }
     }
 
@@ -483,7 +567,7 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
         b.etInput.requestFocus()
         b.etInput.postDelayed({
             val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-            imm.showSoftInput(b.etInput, InputMethodManager.SHOW_FORCED)
+            imm.showSoftInput(b.etInput, InputMethodManager.SHOW_IMPLICIT)
         }, 150)
     }
 

@@ -21,9 +21,7 @@ class AboutFragment : Fragment() {
         container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
-        Toast.makeText(requireContext(), "[DEBUG] About onCreateView start", Toast.LENGTH_SHORT).show()
         _binding = FragmentAboutBinding.inflate(inflater, container, false)
-        Toast.makeText(requireContext(), "[DEBUG] About layout inflated ok", Toast.LENGTH_SHORT).show()
         return binding.root
     }
 
