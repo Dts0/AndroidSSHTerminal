@@ -1,3 +1,7 @@
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -15,6 +19,13 @@ android {
         targetSdk = 34
         versionCode = 2
         versionName = "1.0.1"
+
+        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+        val buildTime = sdf.format(Date())
+        val gitSha = providers.exec { commandLine("git", "rev-parse", "--short", "HEAD") }.standardOutput.asText.get().trim()
+        buildConfigField("String", "BUILD_TIME", "\"$buildTime\"")
+        buildConfigField("String", "GIT_SHA", "\"$gitSha\"")
+        buildConfigField("String", "GIT_REPO", "\"https://github.com/Dts0/AndroidSSHTerminal\"")
     }
 
     buildTypes {
@@ -36,6 +47,7 @@ android {
 
     buildFeatures {
         viewBinding = true
+        buildConfig = true
     }
 }
 
@@ -80,5 +92,21 @@ dependencies {
     kapt("androidx.room:room-compiler:2.6.1")
 
     testImplementation("junit:junit:4.13.2")
+}
+
+// Local-only: copy APK to /workspace/apk after each debug build
+// CI does not need this — the task is skipped when CI=true
+if (System.getenv("CI") == null) {
+    afterEvaluate {
+        tasks.register<Copy>("copyApkToOutput") {
+            from(layout.buildDirectory.dir("outputs/apk/debug"))
+            include("*.apk")
+            into("/workspace/apk")
+            rename { "SSHTerminal-debug.apk" }
+        }
+        tasks.named("assembleDebug") {
+            finalizedBy("copyApkToOutput")
+        }
+    }
 }
 

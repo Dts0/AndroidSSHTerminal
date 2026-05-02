@@ -3,6 +3,7 @@ package com.sshtool.ssh
 import android.content.Context
 import com.jcraft.jsch.*
 import kotlinx.coroutines.*
+import android.util.Log
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
@@ -52,7 +53,9 @@ class SSHConnection(
     private var inputStream: InputStream? = null
     private var outputStream: OutputStream? = null
     private var readerJob: Job? = null
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob() + CoroutineExceptionHandler { _, throwable ->
+        android.util.Log.e("SSHConnection", "Unhandled coroutine exception", throwable)
+    })
     private val trustStore = HostKeyTrustStore(context)
     private val knownHostsFile = File(context.filesDir, "known_hosts")
     
@@ -198,12 +201,14 @@ class SSHConnection(
      * 发送数据到 SSH 会话
      */
     fun send(data: String) {
+        if (disconnected) return
         scope.launch {
             try {
                 val stream = outputStream ?: return@launch
                 stream.write(data.toByteArray(Charsets.UTF_8))
                 stream.flush()
             } catch (e: Exception) {
+                if (disconnected) return@launch
                 withContext(Dispatchers.Main) {
                     listener?.onStateChanged(SSHConnectionState.Error(e.message ?: "发送失败"))
                 }

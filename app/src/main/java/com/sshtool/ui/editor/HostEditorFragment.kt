@@ -98,9 +98,9 @@ class HostEditorFragment : Fragment() {
                         etPrivateKey.setText("")
                         etPassphrase.setText("")
                         layoutPassword.hint = getString(R.string.password)
-                        (layoutPrivateKey.getChildAt(0) as? com.google.android.material.textfield.TextInputLayout)
+                        (etPrivateKey.parent as? com.google.android.material.textfield.TextInputLayout)
                             ?.hint = getString(R.string.private_key_optional_keep)
-                        (layoutPrivateKey.getChildAt(1) as? com.google.android.material.textfield.TextInputLayout)
+                        (etPassphrase.parent as? com.google.android.material.textfield.TextInputLayout)
                             ?.hint = getString(R.string.passphrase_optional_keep)
                     } else {
                         toggleAuthType.check(R.id.btn_password)
@@ -186,13 +186,17 @@ class HostEditorFragment : Fragment() {
         }
         
         viewLifecycleOwner.lifecycleScope.launch {
-            if (existingHost != null) {
-                viewModel.updateHost(host)
-            } else {
-                viewModel.saveHost(host)
+            try {
+                if (existingHost != null) {
+                    viewModel.updateHost(host)
+                } else {
+                    viewModel.saveHost(host)
+                }
+                Toast.makeText(requireContext(), R.string.saved_successfully, Toast.LENGTH_SHORT).show()
+                findNavController().navigateUp()
+            } catch (e: Exception) {
+                Toast.makeText(requireContext(), e.message ?: getString(R.string.error_save_failed), Toast.LENGTH_LONG).show()
             }
-            Toast.makeText(requireContext(), R.string.saved_successfully, Toast.LENGTH_SHORT).show()
-            findNavController().navigateUp()
         }
     }
     

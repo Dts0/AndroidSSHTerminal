@@ -19,7 +19,8 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
         
         val navHostFragment = supportFragmentManager
-            .findFragmentById(R.id.nav_host_fragment) as NavHostFragment
+            .findFragmentById(R.id.nav_host_fragment) as? NavHostFragment
+            ?: throw IllegalStateException("NavHostFragment not found — check nav_graph.xml")
         navController = navHostFragment.navController
     }
     

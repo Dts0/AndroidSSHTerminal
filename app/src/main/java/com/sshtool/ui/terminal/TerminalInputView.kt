@@ -141,4 +141,5 @@ class TerminalInputView @JvmOverloads constructor(
         text?.clear()
         internalEdit = false
     }
+
 }

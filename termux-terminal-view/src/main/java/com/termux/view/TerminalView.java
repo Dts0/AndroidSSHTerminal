@@ -24,6 +24,7 @@ import android.view.KeyEvent;
 import android.view.Menu;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewParent;
 import android.view.ViewConfiguration;
 import android.view.ViewTreeObserver;
 import android.view.accessibility.AccessibilityManager;
@@ -231,13 +232,11 @@ public final class TerminalView extends View {
 
             @Override
             public boolean onDown(float x, float y) {
-                // Why is true not returned here?
-                // https://developer.android.com/training/gestures/detector.html#detect-a-subset-of-supported-gestures
-                // Although setting this to true still does not solve the following errors when long pressing in terminal view text area
-                // ViewDragHelper: Ignoring pointerId=0 because ACTION_DOWN was not received for this pointer before ACTION_MOVE
-                // Commenting out the call to mGestureDetector.onTouchEvent(event) in GestureAndScaleRecognizer#onTouchEvent() removes
-                // the error logging, so issue is related to GestureDetector
-                return false;
+                mScrollRemainder = 0.0f;
+                if (!mScroller.isFinished()) mScroller.abortAnimation();
+                ViewParent parent = getParent();
+                if (parent != null) parent.requestDisallowInterceptTouchEvent(true);
+                return true;
             }
 
             @Override
@@ -605,7 +604,17 @@ public final class TerminalView extends View {
     @TargetApi(23)
     public boolean onTouchEvent(MotionEvent event) {
         if (mEmulator == null) return true;
-        final int action = event.getAction();
+        final int action = event.getActionMasked();
+        final boolean touchPointer = !event.isFromSource(InputDevice.SOURCE_MOUSE);
+
+        ViewParent parent = getParent();
+        if (parent != null && touchPointer) {
+            if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_MOVE || action == MotionEvent.ACTION_POINTER_DOWN) {
+                parent.requestDisallowInterceptTouchEvent(true);
+            } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL || action == MotionEvent.ACTION_POINTER_UP) {
+                parent.requestDisallowInterceptTouchEvent(false);
+            }
+        }
 
         if (isSelectingText()) {
             updateFloatingToolbarVisibility(event);

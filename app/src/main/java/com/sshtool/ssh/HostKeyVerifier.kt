@@ -43,14 +43,14 @@ class TrustingHostKeyRepository(
     private val verifier: HostKeyVerifier
 ) : HostKeyRepository {
     private fun detectHostKeyAlgorithm(key: ByteArray): String {
-        val encoded = Base64.getEncoder().encodeToString(key)
-        return when {
-            encoded.contains("c3NoLWVkMjU1MTk") -> "ssh-ed25519"
-            encoded.contains("ZWNiMnNoYTItbmlzdHAyNTY") -> "ecdsa-sha2-nistp256"
-            encoded.contains("ZWNiMnNoYTItbmlzdHAzODQ") -> "ecdsa-sha2-nistp384"
-            encoded.contains("ZWNiMnNoYTItbmlzdHA1MjE") -> "ecdsa-sha2-nistp521"
-            encoded.contains("c3NoLXJzYQ") -> "ssh-rsa"
-            else -> "ssh-rsa"
+        return try {
+            val algoLen = ((key[0].toInt() and 0xFF) shl 24) or
+                    ((key[1].toInt() and 0xFF) shl 16) or
+                    ((key[2].toInt() and 0xFF) shl 8) or
+                    (key[3].toInt() and 0xFF)
+            String(key, 4, algoLen, Charsets.UTF_8)
+        } catch (e: Exception) {
+            "ssh-rsa"
         }
     }
     override fun check(host: String?, key: ByteArray?): Int {

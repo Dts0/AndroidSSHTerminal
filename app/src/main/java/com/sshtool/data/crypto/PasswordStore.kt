@@ -10,11 +10,7 @@ import androidx.security.crypto.MasterKey
 class PasswordStore(private val context: Context) {
 
     companion object {
-        private const val KEYSTORE_ALIAS = "SSHToolKey"
-        private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val PREFS_NAME = "ssh_passwords"
-        private const val TRANSFORMATION = "AES/GCM/NoPadding"
-        private const val IV_SIZE = 12
     }
 
     private val masterKey = MasterKey.Builder(context)

@@ -61,11 +61,11 @@ class SshTerminalSession(
     override fun onTerminalCursorStateChange(state: Boolean) = Unit
     override fun setTerminalShellPid(session: TerminalSession, pid: Int) = Unit
     override fun getTerminalCursorStyle(): Int = TerminalEmulator.TERMINAL_CURSOR_STYLE_BLOCK
-    override fun logError(tag: String, message: String) = Unit
-    override fun logWarn(tag: String, message: String) = Unit
-    override fun logInfo(tag: String, message: String) = Unit
-    override fun logDebug(tag: String, message: String) = Unit
-    override fun logVerbose(tag: String, message: String) = Unit
-    override fun logStackTraceWithMessage(tag: String, message: String, e: Exception) = Unit
-    override fun logStackTrace(tag: String, e: Exception) = Unit
+    override fun logError(tag: String, message: String) { android.util.Log.e(tag, message) }
+    override fun logWarn(tag: String, message: String) { android.util.Log.w(tag, message) }
+    override fun logInfo(tag: String, message: String) { android.util.Log.i(tag, message) }
+    override fun logDebug(tag: String, message: String) { android.util.Log.d(tag, message) }
+    override fun logVerbose(tag: String, message: String) { android.util.Log.v(tag, message) }
+    override fun logStackTraceWithMessage(tag: String, message: String, e: Exception) { android.util.Log.e(tag, message, e) }
+    override fun logStackTrace(tag: String, e: Exception) { android.util.Log.e(tag, e.toString()) }
 }
