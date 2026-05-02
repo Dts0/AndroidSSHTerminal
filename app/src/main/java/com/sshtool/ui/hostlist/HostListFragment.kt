@@ -71,7 +71,6 @@ class HostListFragment : Fragment() {
     }
     
     private fun setupMenu() {
-        binding.toolbar.inflateMenu(R.menu.menu_host_list)
         binding.toolbar.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 R.id.action_about -> {
