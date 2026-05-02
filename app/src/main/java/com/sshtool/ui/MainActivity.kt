@@ -1,6 +1,7 @@
 package com.sshtool.ui
 
 import android.os.Bundle
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.navigation.NavController
 import androidx.navigation.fragment.NavHostFragment
@@ -25,6 +26,7 @@ class MainActivity : AppCompatActivity() {
     }
     
     override fun onSupportNavigateUp(): Boolean {
+        Toast.makeText(this, "[DEBUG] onSupportNavigateUp called", Toast.LENGTH_SHORT).show()
         return navController.navigateUp() || super.onSupportNavigateUp()
     }
 }
