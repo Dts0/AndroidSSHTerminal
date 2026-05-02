@@ -77,6 +77,21 @@
         app:layout_constraintTop_toBottomOf="@id/status_bar"
         tools:ignore="MissingClass" />
 
+    <com.sshtool.ui.terminal.TerminalInputView
+        android:id="@+id/et_input"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:background="@android:color/transparent"
+        android:enabled="false"
+        android:focusable="true"
+        android:focusableInTouchMode="true"
+        android:textColor="@android:color/transparent"
+        android:textColorHint="@android:color/transparent"
+        android:textSize="0sp"
+        app:layout_constraintBottom_toTopOf="@id/input_container"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
+
     <LinearLayout
         android:id="@+id/input_container"
         android:layout_width="0dp"
@@ -304,19 +319,6 @@
                     android:textSize="10sp" />
             </LinearLayout>
         </LinearLayout>
-
-        <com.sshtool.ui.terminal.TerminalInputView
-            android:id="@+id/et_input"
-            android:layout_width="match_parent"
-            android:layout_height="32dp"
-            android:layout_marginTop="8dp"
-            android:background="@android:color/transparent"
-            android:enabled="false"
-            android:focusable="true"
-            android:focusableInTouchMode="true"
-            android:textColor="#FFFFFF"
-            android:textColorHint="#777777"
-            android:textSize="12sp" />
 
     </LinearLayout>
 
