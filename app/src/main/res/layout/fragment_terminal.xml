@@ -94,7 +94,7 @@
     <com.sshtool.ui.terminal.TerminalInputView
         android:id="@+id/et_input"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
+        android:layout_height="1dp"
         android:background="@android:color/transparent"
         android:enabled="false"
         android:focusable="true"

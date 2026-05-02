@@ -481,8 +481,10 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
         val b = _binding ?: return
         if (!b.etInput.isEnabled) return
         b.etInput.requestFocus()
-        val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-        imm.showSoftInput(b.etInput, InputMethodManager.SHOW_IMPLICIT)
+        b.etInput.postDelayed({
+            val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.showSoftInput(b.etInput, InputMethodManager.SHOW_FORCED)
+        }, 150)
     }
 
     private fun pasteClipboard() {
