@@ -52,3 +52,15 @@
 - App unit tests are sparse in `app/src/test`; most existing unit coverage is in `termux-terminal-emulator/src/test` plus `app/src/test/java/com/sshtool/ssh/HostKeyTrustStoreTest.kt`.
 - `RELEASE_CHECKLIST.md` and `README.md` both treat real-device SSH validation as required before a real release; do not treat emulator/unit-test success as sufficient release validation.
 - `release.keystore` exists in the repo root, but `.gitignore` excludes `*.keystore`; do not modify or commit signing material casually.
+
+## Release signing
+- Production keystore: `/opt/toolchain/openjdk/key/release.keystore`
+- Password hint: `note.txt` in the same directory
+- Signing config reads from `keystore.properties` (gitignored) — create it with:
+  ```properties
+  storeFile=/opt/toolchain/openjdk/key/release.keystore
+  storePassword=<from note.txt>
+  keyAlias=release
+  keyPassword=<same as storePassword>
+  ```
+- `assembleRelease` automatically signs with this config
