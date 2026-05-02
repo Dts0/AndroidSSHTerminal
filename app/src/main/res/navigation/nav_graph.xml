@@ -18,6 +18,10 @@
         <action
             android:id="@+id/action_hostList_to_terminal"
             app:destination="@id/terminalFragment" />
+
+        <action
+            android:id="@+id/action_hostList_to_about"
+            app:destination="@id/aboutFragment" />
     </fragment>
 
     <fragment
@@ -42,5 +46,11 @@
             android:name="hostId"
             app:argType="long" />
     </fragment>
+
+    <fragment
+        android:id="@+id/aboutFragment"
+        android:name="com.sshtool.ui.about.AboutFragment"
+        android:label="关于"
+        tools:layout="@layout/fragment_about" />
 
 </navigation>

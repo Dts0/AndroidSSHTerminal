@@ -24,6 +24,7 @@
     <string name="confirm_delete_message">确认删除“%1$s”吗？此操作会同时删除已保存的密码或私钥。</string>
     <string name="cancel">取消</string>
     <string name="saved_successfully">保存成功</string>
+    <string name="error_save_failed">保存失败</string>
     <string name="name_required">请输入名称</string>
     <string name="host_required">请输入主机地址</string>
     <string name="username_required">请输入用户名</string>
@@ -65,4 +66,12 @@
     <string name="key_end">End</string>
     <string name="key_paste">Paste</string>
     <string name="terminal_touch_to_input">轻触下方输入区开始输入；字符将直接发送到 SSH</string>
+
+    <!-- About -->
+    <string name="about_title">关于</string>
+    <string name="about_version_format">版本 %1$s</string>
+    <string name="about_build_time">构建时间</string>
+    <string name="about_version_code">构建版本号</string>
+    <string name="about_git_sha">Git SHA</string>
+    <string name="about_source_code">项目源码</string>
 </resources>
