@@ -4,7 +4,6 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.widget.PopupMenu
 import androidx.fragment.app.Fragment
@@ -74,21 +73,14 @@ class HostListFragment : Fragment() {
     
     private fun setupMenu() {
         binding.btnAbout.setOnClickListener { anchor ->
-            Toast.makeText(requireContext(), "[DEBUG] 打开菜单", Toast.LENGTH_SHORT).show()
             val popup = PopupMenu(requireContext(), anchor)
             popup.menuInflater.inflate(R.menu.menu_host_list, popup.menu)
             popup.setOnMenuItemClickListener { item ->
                 when (item.itemId) {
                     R.id.action_about -> {
-                        Toast.makeText(requireContext(), "[DEBUG] 点击关于，准备导航", Toast.LENGTH_SHORT).show()
-                        try {
-                            findNavController().navigate(
-                                HostListFragmentDirections.actionHostListToAbout()
-                            )
-                            Toast.makeText(requireContext(), "[DEBUG] 导航调用完成", Toast.LENGTH_SHORT).show()
-                        } catch (e: Exception) {
-                            Toast.makeText(requireContext(), "[DEBUG] 导航异常: ${e.message}", Toast.LENGTH_LONG).show()
-                        }
+                        findNavController().navigate(
+                            HostListFragmentDirections.actionHostListToAbout()
+                        )
                         true
                     }
                     else -> false
