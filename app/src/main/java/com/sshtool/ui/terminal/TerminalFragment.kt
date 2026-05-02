@@ -48,10 +48,10 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
     private var terminalFontSize = 14f
 
     private data class SessionState(
-        val sessionId: String,
+        var sessionId: String,
         var host: Host,
-        val bridge: SshTerminalSession,
-        val terminalSession: TerminalSession,
+        var bridge: SshTerminalSession,
+        var terminalSession: TerminalSession,
         var connectionState: SSHConnectionState = SSHConnectionState.Disconnected
     )
 
@@ -329,9 +329,7 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
 
         viewLifecycleOwner.lifecycleScope.launch {
             val sessionId = manager.connect(host, SSHToolApp.instance.hostRepository, listener)
-            val updated = s.copy(sessionId = sessionId)
-            val sIdx = sessionStates.indexOfFirst { it === s }
-            if (sIdx >= 0) sessionStates[sIdx] = updated
+            s.sessionId = sessionId
             // Update tab tag
             val tab = binding.tabLayout.getTabAt(idx)
             tab?.tag = sessionId
@@ -398,17 +396,11 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
             }
 
             val sessionId = manager.connect(host, SSHToolApp.instance.hostRepository, listener)
-            // Update the state in place
-            val sIdx = sessionStates.indexOf(state)
-            if (sIdx >= 0) {
-                sessionStates[sIdx] = SessionState(
-                    sessionId = sessionId,
-                    host = host,
-                    bridge = newBridge,
-                    terminalSession = newTermSession,
-                    connectionState = SSHConnectionState.Connecting
-                )
-            }
+            // Update the existing state object in-place so listener's captured reference stays valid
+            state.sessionId = sessionId
+            state.bridge = newBridge
+            state.terminalSession = newTermSession
+            state.connectionState = SSHConnectionState.Connecting
             binding.terminalView.attachSession(newTermSession)
             val tab = binding.tabLayout.getTabAt(idx)
             tab?.tag = sessionId
@@ -426,7 +418,12 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
         val state = sessionStates[index]
         binding.terminalView.attachSession(state.terminalSession)
         binding.toolbar.title = state.host.name
-        // Apply the STORED connection state (may have been updated by listener callbacks)
+        // Sync with actual connection state in case listener callback was missed
+        if (state.connectionState !is SSHConnectionState.Connected
+            && state.sessionId.isNotEmpty()
+            && manager.isSessionConnected(state.sessionId)) {
+            state.connectionState = SSHConnectionState.Connected
+        }
         applyConnectionState(state.connectionState)
         if (state.connectionState is SSHConnectionState.Connected) {
             focusTerminalInput()
