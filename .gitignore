@@ -5,6 +5,7 @@ build/
 
 # Android local config
 local.properties
+keystore.properties
 *.keystore
 *.jks
 *.pem
