@@ -416,6 +416,7 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
         if (index < 0 || index >= sessionStates.size) return
         activeIndex = index
         val state = sessionStates[index]
+        manager.switchSession(state.sessionId)
         binding.terminalView.attachSession(state.terminalSession)
         binding.toolbar.title = state.host.name
         // Sync with actual connection state in case listener callback was missed
