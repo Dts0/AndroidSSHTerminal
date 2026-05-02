@@ -5,11 +5,8 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.appcompat.app.AlertDialog
-import androidx.appcompat.app.AppCompatActivity
-import androidx.core.view.MenuProvider
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
-import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -52,15 +49,9 @@ class HostListFragment : Fragment() {
     private fun setupRecyclerView() {
         adapter = HostListAdapter(
             onItemClick = { host ->
-                val previousEntry = findNavController().previousBackStackEntry
-                if (previousEntry?.destination?.id == R.id.terminalFragment) {
-                    previousEntry.savedStateHandle.set("selected_host", host.id)
-                    findNavController().navigateUp()
-                } else {
-                    val action = HostListFragmentDirections
-                        .actionHostListToTerminal(host.id)
-                    findNavController().navigate(action)
-                }
+                val action = HostListFragmentDirections
+                    .actionHostListToTerminal(host.id)
+                findNavController().navigate(action)
             },
             onItemLongClick = { host ->
                 val action = HostListFragmentDirections
@@ -80,24 +71,18 @@ class HostListFragment : Fragment() {
     }
     
     private fun setupMenu() {
-        (requireActivity() as AppCompatActivity).setSupportActionBar(binding.toolbar)
-        requireActivity().addMenuProvider(object : MenuProvider {
-            override fun onCreateMenu(menu: android.view.Menu, menuInflater: android.view.MenuInflater) {
-                menuInflater.inflate(R.menu.menu_host_list, menu)
-            }
-
-            override fun onMenuItemSelected(menuItem: android.view.MenuItem): Boolean {
-                return when (menuItem.itemId) {
-                    R.id.action_about -> {
-                        findNavController().navigate(
-                            HostListFragmentDirections.actionHostListToAbout()
-                        )
-                        true
-                    }
-                    else -> false
+        binding.toolbar.inflateMenu(R.menu.menu_host_list)
+        binding.toolbar.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                R.id.action_about -> {
+                    findNavController().navigate(
+                        HostListFragmentDirections.actionHostListToAbout()
+                    )
+                    true
                 }
+                else -> false
             }
-        }, viewLifecycleOwner, Lifecycle.State.RESUMED)
+        }
     }
 
     private fun setupFab() {

@@ -29,6 +29,7 @@ import com.sshtool.ssh.SSHConnectionManager
 import com.sshtool.ssh.SSHConnectionState
 import com.termux.terminal.TerminalSession
 import com.termux.view.TerminalViewClient
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class TerminalFragment : Fragment(), TerminalInputView.Callback {
@@ -76,7 +77,6 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
         setupConnectionStatus()
         setupBackPressHandler()
         setupTabLayout()
-        observeHostSelection()
 
         val initialHostId = args.hostId
         if (initialHostId != -1L) {
@@ -188,7 +188,7 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
             override fun onTabSelected(tab: TabLayout.Tab) {
                 if (tab.tag == "+") {
                     binding.tabLayout.selectTab(null)
-                    findNavController().navigateUp()
+                    showHostPickerDialog()
                     return
                 }
                 val index = tab.position
@@ -201,15 +201,21 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
         })
     }
 
-    private fun observeHostSelection() {
-        findNavController().currentBackStackEntry?.savedStateHandle
-            ?.getLiveData<Long>("selected_host")
-            ?.observe(viewLifecycleOwner) { hostId ->
-                if (hostId != null && hostId != -1L) {
-                    findNavController().currentBackStackEntry?.savedStateHandle?.remove<Long>("selected_host")
-                    addSession(hostId)
-                }
+    private fun showHostPickerDialog() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            val hosts = SSHToolApp.instance.hostRepository.getAllHosts().first()
+            if (hosts.isEmpty()) {
+                Toast.makeText(requireContext(), "没有可用的主机，请先添加", Toast.LENGTH_SHORT).show()
+                return@launch
             }
+            val names = hosts.map { "${it.name}  (${it.host}:${it.port})" }.toTypedArray()
+            AlertDialog.Builder(requireContext())
+                .setTitle("选择主机")
+                .setItems(names) { _, which ->
+                    addSession(hosts[which].id)
+                }
+                .show()
+        }
     }
 
     private fun addTabFor(host: Host, sessionId: String) {
@@ -217,12 +223,10 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
             .setText(host.name)
             .setTag(sessionId)
         binding.tabLayout.addTab(tab, sessionStates.size)
-        // Re-add the "+" tab at end
         ensureAddTab()
     }
 
     private fun ensureAddTab() {
-        // Remove any existing "+" tab
         val addTabIndex = binding.tabLayout.tabCount - 1
         val lastTab = if (addTabIndex >= 0) binding.tabLayout.getTabAt(addTabIndex) else null
         if (lastTab?.tag == "+") {
@@ -261,13 +265,27 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
         )
         val terminalSession = bridge.create()
 
+        // Register session state BEFORE connecting, so state callbacks can find it
+        val s = SessionState(
+            sessionId = "",
+            host = host,
+            bridge = bridge,
+            terminalSession = terminalSession,
+            connectionState = SSHConnectionState.Connecting
+        )
+        val idx = sessionStates.size
+        sessionStates.add(s)
+        addTabFor(host, "")
+        activeIndex = idx
+        binding.terminalView.attachSession(s.terminalSession)
+        binding.toolbar.title = host.name
+        applyConnectionState(SSHConnectionState.Connecting)
+
         val listener = object : SSHConnectionListener {
             override fun onStateChanged(state: SSHConnectionState) {
                 handler.post {
                     if (!isAdded || _binding == null) return@post
-                    val idx = sessionStates.indexOfFirst { it.bridge === bridge }
-                    if (idx < 0) return@post
-                    sessionStates[idx].connectionState = state
+                    s.connectionState = state
                     updateTabIndicator(idx, state)
                     if (idx == activeIndex) {
                         applyConnectionState(state)
@@ -285,9 +303,7 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
             override fun onDisconnected() {
                 handler.post {
                     if (!isAdded || _binding == null || isLeavingScreen) return@post
-                    val idx = sessionStates.indexOfFirst { it.bridge === bridge }
-                    if (idx < 0) return@post
-                    sessionStates[idx].connectionState = SSHConnectionState.Disconnected
+                    s.connectionState = SSHConnectionState.Disconnected
                     updateTabIndicator(idx, SSHConnectionState.Disconnected)
                     if (idx == activeIndex) {
                         applyConnectionState(SSHConnectionState.Disconnected)
@@ -296,22 +312,14 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
             }
         }
 
-        val state = SessionState(
-            sessionId = "",
-            host = host,
-            bridge = bridge,
-            terminalSession = terminalSession,
-            connectionState = SSHConnectionState.Connecting
-        )
-
         viewLifecycleOwner.lifecycleScope.launch {
             val sessionId = manager.connect(host, SSHToolApp.instance.hostRepository, listener)
-            state.connectionState.let { /* keep Connecting state */ }
-            val idx = sessionStates.size
-            val updated = state.copy(sessionId = sessionId)
-            sessionStates.add(updated)
-            addTabFor(host, sessionId)
-            switchToSession(idx)
+            val updated = s.copy(sessionId = sessionId)
+            val sIdx = sessionStates.indexOfFirst { it === s }
+            if (sIdx >= 0) sessionStates[sIdx] = updated
+            // Update tab tag
+            val tab = binding.tabLayout.getTabAt(idx)
+            tab?.tag = sessionId
         }
     }
 
@@ -321,11 +329,6 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
             val host = viewModel.getHost(state.host.id) ?: return@launch
             connectNewSession(host)
         }
-    }
-
-    private fun getListenerForSession(state: SessionState): SSHConnectionListener? {
-        val session = manager.getSession(state.sessionId)
-        return session?.listener
     }
 
     private fun getActiveState(): SessionState? {
@@ -338,9 +341,12 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
         activeIndex = index
         val state = sessionStates[index]
         binding.terminalView.attachSession(state.terminalSession)
-        applyConnectionState(state.connectionState)
         binding.toolbar.title = state.host.name
-        focusTerminalInput()
+        // Apply the STORED connection state (may have been updated by listener callbacks)
+        applyConnectionState(state.connectionState)
+        if (state.connectionState is SSHConnectionState.Connected) {
+            focusTerminalInput()
+        }
     }
 
     private fun applyConnectionState(state: SSHConnectionState) {
