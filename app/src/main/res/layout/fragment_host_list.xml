@@ -19,7 +19,7 @@
             android:background="?attr/colorPrimary">
 
             <TextView
-                android:id="@+id/btn_overflow"
+                android:id="@+id/btn_about"
                 android:layout_width="48dp"
                 android:layout_height="match_parent"
                 android:layout_gravity="end"
@@ -30,7 +30,7 @@
                 android:clickable="true"
                 android:focusable="true"
                 android:background="?attr/selectableItemBackgroundBorderless"
-                android:contentDescription="更多" />
+                android:contentDescription="@string/about_title" />
 
         </com.google.android.material.appbar.MaterialToolbar>
 

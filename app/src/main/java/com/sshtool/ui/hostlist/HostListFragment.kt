@@ -5,7 +5,6 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.appcompat.app.AlertDialog
-import androidx.appcompat.widget.PopupMenu
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.lifecycleScope
@@ -72,21 +71,8 @@ class HostListFragment : Fragment() {
     }
     
     private fun setupMenu() {
-        binding.btnOverflow.setOnClickListener { anchor ->
-            val popup = PopupMenu(requireContext(), anchor)
-            popup.menuInflater.inflate(R.menu.menu_host_list, popup.menu)
-            popup.setOnMenuItemClickListener { item ->
-                when (item.itemId) {
-                    R.id.action_about -> {
-                        findNavController().navigate(
-                            HostListFragmentDirections.actionHostListToAbout()
-                        )
-                        true
-                    }
-                    else -> false
-                }
-            }
-            popup.show()
+        binding.btnAbout.setOnClickListener {
+            findNavController().navigate(HostListFragmentDirections.actionHostListToAbout())
         }
     }
 
