@@ -27,9 +27,24 @@ interface HostDao {
     suspend fun updateLastConnected(hostId: Long, timestamp: Long)
 }
 
-@Database(entities = [Host::class], version = 1, exportSchema = false)
+@Database(entities = [Host::class], version = 1, exportSchema = true)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun hostDao(): HostDao
+
+    companion object {
+        /**
+         * Room migrations for [AppDatabase]. Add a `Migration(N, N+1)` here for
+         * every schema change and bump the @Database version. Without an
+         * explicit migration Room would crash on upgrade for existing users.
+         *
+         * Schema JSON is exported (`exportSchema = true`) to
+         * `app/schemas/.../N.json`; commit those files — they are what
+         * migration authoring is validated against.
+         */
+        val MIGRATIONS: Array<Migration> = arrayOf(
+            // e.g. object MIGRATION_1_2 : Migration(1, 2) { override fun migrate(db: SupportSQLiteDatabase) { ... } }
+        )
+    }
 }
 
 class HostRepository(context: Context) {
@@ -38,7 +53,15 @@ class HostRepository(context: Context) {
         context.applicationContext,
         AppDatabase::class.java,
         "ssh_tool_db"
-    ).build()
+    )
+        .addMigrations(*AppDatabase.MIGRATIONS)
+        // Safety net: if a schema change ships without an explicit migration
+        // (or the installed DB is newer than the code knows about), recreate
+        // the DB instead of crashing on launch and bricking the app. Host
+        // metadata is lost in that case, but secrets live in PasswordStore and
+        // survive. Always prefer adding a real migration above.
+        .fallbackToDestructiveMigration()
+        .build()
 
     private val hostDao = database.hostDao()
     private val passwordStore = PasswordStore(context)
