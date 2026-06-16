@@ -35,6 +35,8 @@
     <string name="host_key_checking_enabled_notice">已启用主机密钥校验；首次连接需要确认主机指纹。</string>
     <string name="host_key_confirm_title">确认主机指纹</string>
     <string name="host_key_confirm_message">即将连接 %1$s:%2$d\n算法：%3$s\n指纹：%4$s\n\n请确认该指纹与服务器端一致后再继续。</string>
+    <string name="host_key_changed_title">⚠ 主机指纹已变更</string>
+    <string name="host_key_changed_message">%1$s:%2$d 返回的指纹与之前信任的指纹不一致！\n算法：%3$s\n新指纹：%4$s\n\n这可能是中间人攻击或服务器密钥已被更换。仅当你确认服务器确实更换了密钥时才应继续。</string>
     <string name="trust_and_connect">信任并连接</string>
     <string name="host_key_rejected">已取消连接，未信任该主机指纹。</string>
     <string name="connection_success">=== 连接成功 ===</string>

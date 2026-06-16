@@ -28,13 +28,28 @@ class HostKeyTrustStoreTest {
     }
 
     @Test
-    fun trust_matchesEvenIfAlgorithmNameDiffers() {
+    fun trust_doesNotMatchWhenAlgorithmDiffers() {
+        // Pinning now compares the algorithm as well as host+port+fingerprint,
+        // so a key offered under a different algorithm must not match the pin.
         val file = File.createTempFile("hostkeys", ".tsv")
         val store = HostKeyStoreBackend(file)
         val key = "c3NoLWVkMjU1MTk="
         store.trust("example.com", 22, "ssh-ed25519", key)
 
-        assertTrue(store.isTrusted("example.com", 22, "ssh-rsa", key))
+        assertFalse(store.isTrusted("example.com", 22, "ssh-rsa", key))
+        assertTrue(store.isTrusted("example.com", 22, "ssh-ed25519", key))
+    }
+
+    @Test
+    fun hasTrustedHost_distinguishesFirstConnectFromKeyChange() {
+        val file = File.createTempFile("hostkeys", ".tsv")
+        val store = HostKeyStoreBackend(file)
+        assertFalse(store.hasTrustedHost("example.com", 22))
+        store.trust("example.com", 22, "ssh-ed25519", "c3NoLWVkMjU1MTk=")
+        // A different key for the same host still reports the host as pinned,
+        // so the caller can tell "first connect" from "key changed".
+        assertTrue(store.hasTrustedHost("example.com", 22))
+        assertFalse(store.hasTrustedHost("other.com", 22))
     }
 
     @Test

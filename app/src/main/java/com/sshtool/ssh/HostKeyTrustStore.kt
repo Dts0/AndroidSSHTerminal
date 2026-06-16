@@ -21,9 +21,21 @@ open class HostKeyStoreBackend(
     fun isTrusted(host: String, port: Int, algorithm: String, key: String): Boolean {
         val expected = fingerprint(key)
         return loadEntries().any {
-            it.host == host && it.port == port && it.fingerprint == expected
+            it.host == host &&
+                it.port == port &&
+                it.algorithm == algorithm &&
+                it.fingerprint == expected
         }
     }
+
+    /**
+     * Whether [host]:[port] has *any* trusted key pinned, regardless of algorithm.
+     * Used to distinguish "first connect" (no pin yet) from "key changed" (pin exists
+     * but the presented key differs) — the latter must surface a warning, never be
+     * silently accepted (host-key MITM defense).
+     */
+    fun hasTrustedHost(host: String, port: Int): Boolean =
+        loadEntries().any { it.host == host && it.port == port }
 
     fun trust(host: String, port: Int, algorithm: String, key: String) {
         val fingerprint = fingerprint(key)

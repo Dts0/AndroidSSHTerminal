@@ -463,6 +463,15 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
                 b.statusIndicator.setBackgroundResource(R.drawable.status_error)
                 showHostKeyDialog(state)
             }
+            is SSHConnectionState.HostKeyChanged -> {
+                setToolbarVisible(true)
+                b.tvStatus.text = getString(R.string.status_error, state.fingerprint)
+                b.btnConnect.isEnabled = false
+                b.btnDisconnect.isEnabled = false
+                setTerminalInputEnabled(false)
+                b.statusIndicator.setBackgroundResource(R.drawable.status_error)
+                showHostKeyDialog(state)
+            }
             is SSHConnectionState.Error -> {
                 setToolbarVisible(true)
                 b.tvStatus.text = getString(R.string.status_error, state.message)
@@ -488,8 +497,10 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
         val colorRes = when (state) {
             is SSHConnectionState.Connected -> R.drawable.status_connected
             is SSHConnectionState.Connecting -> R.drawable.status_connecting
-            is SSHConnectionState.Error -> R.drawable.status_error
-            else -> R.drawable.status_disconnected
+            is SSHConnectionState.Error,
+            is SSHConnectionState.HostKeyConfirmationRequired,
+            is SSHConnectionState.HostKeyChanged -> R.drawable.status_error
+            is SSHConnectionState.Disconnected -> R.drawable.status_disconnected
         }
         val drawable = AppCompatResources.getDrawable(requireContext(), colorRes)
         tab.setIcon(drawable)
@@ -504,6 +515,27 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
             .setNegativeButton(R.string.cancel) { _, _ ->
                 Toast.makeText(requireContext(), R.string.host_key_rejected, Toast.LENGTH_SHORT).show()
             }
+            .setPositiveButton(R.string.trust_and_connect) { _, _ ->
+                viewLifecycleOwner.lifecycleScope.launch {
+                    manager.trustAndReconnect(activeState.sessionId, SSHToolApp.instance.hostRepository)
+                }
+            }
+            .setCancelable(false)
+            .show()
+    }
+
+    private fun showHostKeyDialog(state: SSHConnectionState.HostKeyChanged) {
+        if (!isAdded) return
+        val activeState = getActiveState() ?: return
+        AlertDialog.Builder(requireContext())
+            .setIcon(android.R.drawable.stat_sys_warning)
+            .setTitle(R.string.host_key_changed_title)
+            .setMessage(getString(R.string.host_key_changed_message, state.host, state.port, state.algorithm, state.fingerprint))
+            .setNegativeButton(R.string.cancel) { _, _ ->
+                Toast.makeText(requireContext(), R.string.host_key_rejected, Toast.LENGTH_SHORT).show()
+            }
+            // A changed key is re-pinned only via the same trust-and-reconnect
+            // path; the repo re-verifies the key on the fresh handshake.
             .setPositiveButton(R.string.trust_and_connect) { _, _ ->
                 viewLifecycleOwner.lifecycleScope.launch {
                     manager.trustAndReconnect(activeState.sessionId, SSHToolApp.instance.hostRepository)

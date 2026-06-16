@@ -21,6 +21,17 @@ sealed class SSHConnectionState {
         val algorithm: String,
         val fingerprint: String
     ) : SSHConnectionState()
+    /**
+     * A host previously trusted under a different key is now presenting a
+     * different key. This is a potential MITM and must be surfaced as a
+     * distinct warning rather than folded into the first-connect prompt.
+     */
+    data class HostKeyChanged(
+        val host: String,
+        val port: Int,
+        val algorithm: String,
+        val fingerprint: String
+    ) : SSHConnectionState()
     data class Error(val message: String) : SSHConnectionState()
     object Disconnected : SSHConnectionState()
 }
@@ -58,6 +69,7 @@ class SSHConnection(
     })
     private val trustStore = HostKeyTrustStore(context)
     private val knownHostsFile = File(context.filesDir, "known_hosts")
+    private var hostKeyRepository: StrictHostKeyRepository? = null
     
     var listener: SSHConnectionListener? = null
     
@@ -93,8 +105,15 @@ class SSHConnection(
                 
                 session = jsch.getSession(username, hostAddress, hostPort)
                 val verifier = HostKeyVerifier(hostAddress, hostPort, trustStore)
-                val hostKeyRepository = TrustingHostKeyRepository(jsch.hostKeyRepository, verifier)
-                jsch.hostKeyRepository = hostKeyRepository
+                val repo = StrictHostKeyRepository(
+                    delegate = jsch.hostKeyRepository,
+                    verifier = verifier,
+                    host = hostAddress,
+                    port = hostPort,
+                    trustStore = trustStore
+                )
+                hostKeyRepository = repo
+                jsch.hostKeyRepository = repo
                 
                 // 设置密码或密钥认证
                 if (!useKeyAuth && password != null) {
@@ -132,24 +151,28 @@ class SSHConnection(
                 
             } catch (e: JSchException) {
                 val message = e.message ?: "连接失败"
-                if (message.contains("reject HostKey", ignoreCase = true) || message.contains("HostKey", ignoreCase = true)) {
-                    try {
-                        val hostKey = session?.hostKey
-                        if (hostKey != null) {
-                            listener?.onStateChanged(
-                                SSHConnectionState.HostKeyConfirmationRequired(
-                                    host = hostAddress,
-                                    port = hostPort,
-                                    algorithm = hostKey.type,
-                                    fingerprint = trustStore.fingerprint(hostKey.key)
-                                )
-                            )
-                        } else {
-                            listener?.onStateChanged(SSHConnectionState.Error(message))
-                        }
-                    } catch (_: Exception) {
-                        listener?.onStateChanged(SSHConnectionState.Error(message))
+                // Drive the TOFU flow from the host-key repository's recorded
+                // result rather than from JSch's English exception text, which
+                // is fragile across versions/locales (M6).
+                val rejected = hostKeyRepository?.lastRejectedKey
+                if (rejected != null) {
+                    val alreadyPinned = trustStore.hasTrustedHost(hostAddress, hostPort)
+                    val state = if (alreadyPinned) {
+                        SSHConnectionState.HostKeyChanged(
+                            host = hostAddress,
+                            port = hostPort,
+                            algorithm = rejected.algorithm,
+                            fingerprint = rejected.fingerprint
+                        )
+                    } else {
+                        SSHConnectionState.HostKeyConfirmationRequired(
+                            host = hostAddress,
+                            port = hostPort,
+                            algorithm = rejected.algorithm,
+                            fingerprint = rejected.fingerprint
+                        )
                     }
+                    listener?.onStateChanged(state)
                 } else {
                     listener?.onStateChanged(SSHConnectionState.Error(message))
                 }
@@ -159,9 +182,20 @@ class SSHConnection(
         }
     }
 
+    /**
+     * Pin the host key that was just rejected and shown to the user.
+     *
+     * Uses the key recorded by [StrictHostKeyRepository.lastRejectedKey] — the
+     * exact key whose fingerprint was displayed in the confirmation/changed
+     * dialog — instead of `session?.hostKey`, which may be null after a failed
+     * connect. On the subsequent reconnect the key is re-verified during the
+     * fresh handshake (C2 TOCTOU defense): if an attacker rotates the key in
+     * between, the new key will not match this pin and the connect fails /
+     * re-prompts rather than silently connecting under a different key.
+     */
     fun trustCurrentHostKey(): Boolean {
-        val hostKey = session?.hostKey ?: return false
-        trustStore.trust(hostAddress, hostPort, hostKey.type, hostKey.key)
+        val rejected = hostKeyRepository?.lastRejectedKey ?: return false
+        trustStore.trust(hostAddress, hostPort, rejected.algorithm, rejected.encodedKey)
         return true
     }
 
