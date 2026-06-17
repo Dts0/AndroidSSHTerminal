@@ -5,11 +5,18 @@ import com.sshtool.data.model.Host
 import com.sshtool.data.repository.HostRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.util.UUID
 
 /**
- * 多会话 SSH 连接管理器
+ * 多会话 SSH 连接管理器。
+ *
+ * [sessions] 与 [activeSessionId] 通过 [lock] 同步访问，避免 [connect]/
+ * [disconnect]/[switchSession] 在不同协程上下文并发读写时出现
+ * ConcurrentModificationException 或丢写（M7）。后台写（如更新最近连接
+ * 时间）使用受管的 [scope] 而非游离的 CoroutineScope（M2）。
  */
 class SSHConnectionManager {
 
@@ -20,31 +27,39 @@ class SSHConnectionManager {
         var listener: SSHConnectionListener
     )
 
+    private val lock = Any()
+
     private val sessions = linkedMapOf<String, SessionInfo>()
     private var activeSessionId: String? = null
 
+    /** 受管的后台 scope，随管理器生命周期取消，不会泄漏（M2）。 */
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
     val activeConnection: SSHConnection?
-        get() = activeSessionId?.let { sessions[it]?.connection }
+        get() = synchronized(lock) { activeSessionId?.let { sessions[it]?.connection } }
 
     val activeHost: Host?
-        get() = activeSessionId?.let { sessions[it]?.host }
+        get() = synchronized(lock) { activeSessionId?.let { sessions[it]?.host } }
 
     val sessionCount: Int
-        get() = sessions.size
+        get() = synchronized(lock) { sessions.size }
 
-    fun getSessionIds(): List<String> = sessions.keys.toList()
+    fun getSessionIds(): List<String> = synchronized(lock) { sessions.keys.toList() }
 
-    fun getSession(id: String): SessionInfo? = sessions[id]
+    fun getSession(id: String): SessionInfo? = synchronized(lock) { sessions[id] }
 
-    fun getActiveSessionId(): String? = activeSessionId
+    fun getActiveSessionId(): String? = synchronized(lock) { activeSessionId }
 
     fun isActiveConnected(): Boolean = activeConnection?.isConnected == true
 
-    fun isSessionConnected(id: String): Boolean = sessions[id]?.connection?.isConnected == true
+    fun isSessionConnected(id: String): Boolean =
+        synchronized(lock) { sessions[id] }?.connection?.isConnected == true
 
     fun switchSession(id: String) {
-        if (sessions.containsKey(id)) {
-            activeSessionId = id
+        synchronized(lock) {
+            if (sessions.containsKey(id)) {
+                activeSessionId = id
+            }
         }
     }
 
@@ -70,7 +85,9 @@ class SSHConnectionManager {
         val wrappedListener = object : SSHConnectionListener {
             override fun onStateChanged(state: SSHConnectionState) {
                 if (state is SSHConnectionState.Connected) {
-                    CoroutineScope(Dispatchers.IO).launchUpdateLastConnected(repository, host.id)
+                    // Use the manager's owned scope rather than a free-floating
+                    // CoroutineScope that could never be cancelled (M2).
+                    scope.launch { repository.updateLastConnected(host.id) }
                 }
                 listener.onStateChanged(state)
             }
@@ -95,26 +112,36 @@ class SSHConnectionManager {
             passphrase = passphrase
         ).apply { this.listener = wrappedListener }
 
-        sessions[sessionId] = SessionInfo(
-            id = sessionId,
-            host = host,
-            connection = connection,
-            listener = wrappedListener
-        )
-        activeSessionId = sessionId
+        synchronized(lock) {
+            sessions[sessionId] = SessionInfo(
+                id = sessionId,
+                host = host,
+                connection = connection,
+                listener = wrappedListener
+            )
+            activeSessionId = sessionId
+        }
 
         connection.connect()
         return sessionId
     }
 
     suspend fun trustAndReconnect(sessionId: String, repository: HostRepository) {
-        val session = sessions[sessionId] ?: return
-        val host = session.host
-        val currentListener = session.listener
-        val trusted = session.connection.trustCurrentHostKey()
-        session.connection.destroy()
-        sessions.remove(sessionId)
-        if (activeSessionId == sessionId) activeSessionId = null
+        val host: Host
+        val currentListener: SSHConnectionListener
+        val connection: SSHConnection
+        synchronized(lock) {
+            val session = sessions[sessionId] ?: return
+            host = session.host
+            currentListener = session.listener
+            connection = session.connection
+        }
+        val trusted = connection.trustCurrentHostKey()
+        connection.destroy()
+        synchronized(lock) {
+            sessions.remove(sessionId)
+            if (activeSessionId == sessionId) activeSessionId = null
+        }
         if (trusted) {
             connect(host, repository, currentListener)
         } else {
@@ -127,35 +154,42 @@ class SSHConnectionManager {
     }
 
     fun reattachListener(sessionId: String, listener: SSHConnectionListener) {
-        val session = sessions[sessionId] ?: return
-        session.listener = listener
-        session.connection.listener = listener
-    }
-
-    fun disconnect(sessionId: String) {
-        val session = sessions.remove(sessionId) ?: return
-        session.connection.destroy()
-        if (activeSessionId == sessionId) {
-            activeSessionId = if (sessions.isNotEmpty()) sessions.keys.last() else null
+        synchronized(lock) {
+            val session = sessions[sessionId] ?: return
+            session.listener = listener
+            session.connection.listener = listener
         }
     }
 
+    fun disconnect(sessionId: String) {
+        val session: SessionInfo?
+        synchronized(lock) {
+            session = sessions.remove(sessionId)
+            if (session != null && activeSessionId == sessionId) {
+                activeSessionId = if (sessions.isNotEmpty()) sessions.keys.last() else null
+            }
+        }
+        session?.connection?.destroy()
+    }
+
     fun disconnectAll() {
-        sessions.values.forEach { it.connection.destroy() }
-        sessions.clear()
-        activeSessionId = null
+        val toDestroy: List<SSHConnection>
+        synchronized(lock) {
+            toDestroy = sessions.values.map { it.connection }
+            sessions.clear()
+            activeSessionId = null
+        }
+        // Tear down outside the lock so blocking socket close doesn't hold it.
+        toDestroy.forEach { runCatching { it.destroy() } }
+    }
+
+    /** Cancel background scopes; used when the app is being torn down. */
+    fun shutdown() {
+        disconnectAll()
+        scope.cancel()
     }
 
     companion object {
         val instance = SSHConnectionManager()
-    }
-}
-
-private fun CoroutineScope.launchUpdateLastConnected(
-    repository: HostRepository,
-    hostId: Long
-) {
-    launch {
-        repository.updateLastConnected(hostId)
     }
 }

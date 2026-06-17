@@ -3,6 +3,8 @@ package com.sshtool.ssh
 import android.content.Context
 import com.jcraft.jsch.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import android.util.Log
 import java.io.File
 import java.io.InputStream
@@ -64,6 +66,9 @@ class SSHConnection(
     private var inputStream: InputStream? = null
     private var outputStream: OutputStream? = null
     private var readerJob: Job? = null
+    /** Serializes outbound writes so concurrent send() calls can't interleave
+     *  bytes on JSch's non-thread-safe ChannelShell OutputStream (C6). */
+    private val sendMutex = Mutex()
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob() + CoroutineExceptionHandler { _, throwable ->
         android.util.Log.e("SSHConnection", "Unhandled coroutine exception", throwable)
     })
@@ -219,32 +224,46 @@ class SSHConnection(
                         }
                     }
                 }
-            } catch (_: Exception) {
-                // ignore, disconnect path below handles state reporting
-            } finally {
+            } catch (e: Exception) {
+                // Reader loop ended due to an I/O or channel error. Log the
+                // cause so disconnects aren't silent (M3); the disconnect path
+                // below handles state reporting to the listener.
                 if (!disconnected) {
-                    withContext(Dispatchers.Main) {
-                        disconnect()
-                    }
+                    Log.i("SSHConnection", "reader loop ended: ${e.message}", e)
+                }
+            } finally {
+                // Already on Dispatchers.IO here. Run disconnect() on the IO
+                // thread so blocking socket/channel close does not stall the UI
+                // thread (M8); disconnect() hops to Main only for the listener
+                // notification at the end.
+                if (!disconnected) {
+                    disconnect()
                 }
             }
         }
     }
 
     /**
-     * 发送数据到 SSH 会话
+     * 发送数据到 SSH 会话。
+     *
+     * 用 [sendMutex] 串行化写操作，避免多次并发调用导致字节流在
+     * JSch 非线程安全的 ChannelShell OutputStream 上交错（C6）。
      */
     fun send(data: String) {
         if (disconnected) return
         scope.launch {
-            try {
-                val stream = outputStream ?: return@launch
-                stream.write(data.toByteArray(Charsets.UTF_8))
-                stream.flush()
-            } catch (e: Exception) {
-                if (disconnected) return@launch
-                withContext(Dispatchers.Main) {
-                    listener?.onStateChanged(SSHConnectionState.Error(e.message ?: "发送失败"))
+            sendMutex.withLock {
+                if (disconnected) return@withLock
+                try {
+                    val stream = outputStream ?: return@withLock
+                    stream.write(data.toByteArray(Charsets.UTF_8))
+                    stream.flush()
+                } catch (e: Exception) {
+                    if (disconnected) return@withLock
+                    Log.w("SSHConnection", "send failed", e)
+                    withContext(Dispatchers.Main) {
+                        listener?.onStateChanged(SSHConnectionState.Error(e.message ?: "发送失败"))
+                    }
                 }
             }
         }
@@ -254,44 +273,58 @@ class SSHConnection(
         scope.launch {
             try {
                 channel?.setPtySize(columns, rows, 0, 0)
-            } catch (_: Exception) {
-                // Ignore transient resize failures.
+            } catch (e: Exception) {
+                if (!disconnected) Log.w("SSHConnection", "setPtySize failed", e)
             }
         }
     }
 
     /**
-     * 断开连接（幂等）
+     * 断开连接（幂等）。
+     *
+     * 阻塞的 socket/channel 关闭在调用线程执行（通常为 IO 线程），避免在
+     * UI 线程上做 socket close（M8）。Listener 回调被 post 到主线程。
      */
     fun disconnect() {
         if (disconnected) return
         disconnected = true
-        
+
         // 先关闭 inputStream，打断阻塞中的 read()
         try {
             inputStream?.close()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w("SSHConnection", "close inputStream failed", e)
         }
         readerJob?.cancel()
         readerJob = null
         try {
             outputStream?.close()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w("SSHConnection", "close outputStream failed", e)
         }
         try {
             channel?.disconnect()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w("SSHConnection", "channel.disconnect failed", e)
         }
         try {
             session?.disconnect()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w("SSHConnection", "session.disconnect failed", e)
         }
         channel = null
         session = null
         inputStream = null
         outputStream = null
-        listener?.onStateChanged(SSHConnectionState.Disconnected)
-        listener?.onDisconnected()
+        // Notify the listener on the main thread. disconnect() may be called
+        // from the IO reader loop; listener impls typically touch views.
+        val l = listener
+        if (l != null) {
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                l.onStateChanged(SSHConnectionState.Disconnected)
+                l.onDisconnected()
+            }
+        }
     }
 
     /**
