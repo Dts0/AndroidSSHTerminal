@@ -8,6 +8,11 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("androidx.navigation.safeargs.kotlin")
+    // kapt is used for the Room compiler. KSP is the recommended, faster
+    // replacement (Room 2.6.1 supports it); migrate by adding the
+    // com.google.devtools.ksp plugin (1.9.20-1.0.14) and switching the
+    // dependency below from kapt(...) to ksp(...). Left as kapt for now to
+    // avoid an unverified build change (m8).
     id("kotlin-kapt")
 }
 
@@ -40,6 +45,11 @@ android {
                 storePassword = props.getProperty("storePassword", "")
                 keyAlias = props.getProperty("keyAlias", "release")
                 keyPassword = props.getProperty("keyPassword", "")
+            } else {
+                // Surface the missing-keystore case loudly at configuration time
+                // rather than failing late at the signing step of assembleRelease (m7).
+                logger.lifecycle("WARNING: keystore.properties not found at ${propsFile.absolutePath}; " +
+                    "release builds will be unsigned. Create it with storeFile/storePassword/keyAlias/keyPassword.")
             }
         }
     }

@@ -125,10 +125,19 @@ class SSHConnection(
                     session?.setPassword(password)
                 }
                 
-                // 配置 SSH 会话
+                // 配置 SSH 会话。
+                // Cipher/KEX/MAC 故意不固定允许列表，沿用 JSch 0.2.18 (mwiede fork)
+                // 的安全默认值（默认已排除 SHA-1 等弱算法）。如需更严格的策略，
+                // 可在此处设置 cipher.s2c / kex / mac 等配置项（m3）。
                 session?.apply {
                     setConfig("StrictHostKeyChecking", "yes")
-                    setConfig("PreferredAuthentications", if (useKeyAuth) "publickey" else "password")
+                    // Allow keyboard-interactive as a fallback to password: some
+                    // servers only offer it, and restricting to a single method
+                    // caused silent auth failures (m4).
+                    setConfig(
+                        "PreferredAuthentications",
+                        if (useKeyAuth) "publickey" else "keyboard-interactive,password"
+                    )
                     setConfig("HashKnownHosts", "yes")
                     serverAliveInterval = 15000
                     serverAliveCountMax = 3
