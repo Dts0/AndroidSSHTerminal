@@ -153,6 +153,15 @@ class SSHConnectionManager {
         activeConnection?.updatePtySize(columns, rows)
     }
 
+    /**
+     * Resize the PTY of a specific session (not just the active one), so a
+     * newly-connected session can be reconciled with the emulator's actual
+     * dimensions regardless of which session is currently active (M9).
+     */
+    fun updatePtySizeForSession(sessionId: String, columns: Int, rows: Int) {
+        synchronized(lock) { sessions[sessionId] }?.connection?.updatePtySize(columns, rows)
+    }
+
     fun reattachListener(sessionId: String, listener: SSHConnectionListener) {
         synchronized(lock) {
             val session = sessions[sessionId] ?: return

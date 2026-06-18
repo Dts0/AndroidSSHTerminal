@@ -333,8 +333,9 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
         viewLifecycleOwner.lifecycleScope.launch {
             val sessionId = manager.connect(host, SSHToolApp.instance.hostRepository, listener)
             s.sessionId = sessionId
-            // Update tab tag
-            val tab = binding.tabLayout.getTabAt(idx)
+            // Update tab tag. Guard against the view being torn down while the
+            // suspend connect() was in flight (m5).
+            val tab = _binding?.tabLayout?.getTabAt(idx)
             tab?.tag = sessionId
         }
     }
@@ -404,8 +405,10 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
             state.bridge = newBridge
             state.terminalSession = newTermSession
             state.connectionState = SSHConnectionState.Connecting
-            binding.terminalView.attachSession(newTermSession)
-            val tab = binding.tabLayout.getTabAt(idx)
+            // Guard binding access for the same suspend-race reason (m5).
+            val b = _binding ?: return@launch
+            b.terminalView.attachSession(newTermSession)
+            val tab = b.tabLayout.getTabAt(idx)
             tab?.tag = sessionId
         }
     }
@@ -430,6 +433,9 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
         }
         applyConnectionState(state.connectionState)
         if (state.connectionState is SSHConnectionState.Connected) {
+            // Re-sync the now-active session's PTY size in case the visible
+            // dimensions changed while this tab was backgrounded (M9).
+            syncPtySizeFromEmulator()
             focusTerminalInput()
         }
     }
@@ -453,6 +459,10 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
                 b.statusIndicator.setBackgroundResource(R.drawable.status_connected)
                 clearInputField()
                 focusTerminalInput()
+                // The SSH channel is opened with a hardcoded 120x40 PTY size.
+                // Reconcile it with the emulator's actual dimensions so the
+                // remote shell matches what the user sees (M9).
+                syncPtySizeFromEmulator()
             }
             is SSHConnectionState.HostKeyConfirmationRequired -> {
                 setToolbarVisible(true)
@@ -602,6 +612,18 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
             val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
             imm.showSoftInput(b.etInput, InputMethodManager.SHOW_IMPLICIT)
         }, 150)
+    }
+
+    /**
+     * Push the emulator's actual column/row count to the SSH PTY. The shell
+     * channel is opened with a fixed 120x40 size; this reconciles it with the
+     * real view so prompts and full-screen apps render correctly (M9).
+     */
+    private fun syncPtySizeFromEmulator() {
+        val state = getActiveState() ?: return
+        if (state.sessionId.isEmpty()) return
+        val emulator = state.terminalSession.emulator ?: return
+        manager.updatePtySizeForSession(state.sessionId, emulator.mColumns, emulator.mRows)
     }
 
     private fun pasteClipboard() {

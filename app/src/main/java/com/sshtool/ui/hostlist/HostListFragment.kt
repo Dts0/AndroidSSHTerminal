@@ -28,6 +28,14 @@ class HostListFragment : Fragment() {
     }
     
     private lateinit var adapter: HostListAdapter
+
+    /**
+     * Guards against double-tap navigation: Android can deliver two onClick
+     * events for a single user double-tap, which would otherwise push two
+     * TerminalFragment instances and open two SSH connections to the same host
+     * (M10). Set on navigate, cleared on onResume.
+     */
+    private var isNavigating = false
     
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -50,11 +58,15 @@ class HostListFragment : Fragment() {
     private fun setupRecyclerView() {
         adapter = HostListAdapter(
             onItemClick = { host ->
+                if (isNavigating) return@HostListAdapter
+                isNavigating = true
                 val action = HostListFragmentDirections
                     .actionHostListToTerminal(host.id)
                 findNavController().navigate(action)
             },
             onItemLongClick = { host ->
+                if (isNavigating) return@HostListAdapter true
+                isNavigating = true
                 val action = HostListFragmentDirections
                     .actionHostListToEditor(host.id)
                 findNavController().navigate(action)
@@ -117,6 +129,13 @@ class HostListFragment : Fragment() {
             .show()
     }
     
+    override fun onResume() {
+        super.onResume()
+        // Returning to this fragment means any pending navigation completed;
+        // re-enable click handling (M10 debounce).
+        isNavigating = false
+    }
+
     override fun onDestroyView() {
         super.onDestroyView()
         _binding = null
