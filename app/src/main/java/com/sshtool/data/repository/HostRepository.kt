@@ -115,16 +115,23 @@ class HostRepository(context: Context) {
 
     fun getPassphrase(hostId: Long): String? = passwordStore.getPassphrase(hostId)
 
-    private fun Host.sanitizedForDatabase(): Host = copy().also {
-        it.password = null
-        it.privateKey = null
-        it.passphrase = null
-    }
+    private fun Host.sanitizedForDatabase(): Host = sanitizeForDatabase()
 
     private fun Host.withSecrets(): Host = this.also {
         it.password = passwordStore.getPassword(it.id)
         it.privateKey = passwordStore.getPrivateKey(it.id)
         it.passphrase = passwordStore.getPassphrase(it.id)
     }
+}
+
+/**
+ * Return a copy of this [Host] with all secret fields (@Ignore password /
+ * privateKey / passphrase) cleared, so they are never written to Room.
+ * Internal so it can be unit-tested — secrets must never reach the DB.
+ */
+internal fun Host.sanitizeForDatabase(): Host = copy().also {
+    it.password = null
+    it.privateKey = null
+    it.passphrase = null
 }
 

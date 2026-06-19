@@ -3,14 +3,23 @@ package com.sshtool.ssh
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import java.io.File
 
 class HostKeyTrustStoreTest {
+
+    // Tracks and cleans up temp files instead of leaking them across runs.
+    @get:Rule
+    val tempFolder = TemporaryFolder()
+
+    private fun newStore(): HostKeyStoreBackend =
+        HostKeyStoreBackend(File.createTempFile("hostkeys", ".tsv", tempFolder.root))
+
     @Test
     fun fingerprint_isStableForBase64Key() {
-        val file = File.createTempFile("hostkeys", ".tsv")
-        val store = HostKeyStoreBackend(file)
+        val store = newStore()
         val key = "c3NoLXJzYQ=="
         val fp1 = store.fingerprint(key)
         val fp2 = store.fingerprint(key)
@@ -19,8 +28,7 @@ class HostKeyTrustStoreTest {
 
     @Test
     fun trust_persistsAndMatches() {
-        val file = File.createTempFile("hostkeys", ".tsv")
-        val store = HostKeyStoreBackend(file)
+        val store = newStore()
         val key = "c3NoLWVkMjU1MTk="
         assertFalse(store.isTrusted("example.com", 22, "ssh-ed25519", key))
         store.trust("example.com", 22, "ssh-ed25519", key)
@@ -31,8 +39,7 @@ class HostKeyTrustStoreTest {
     fun trust_doesNotMatchWhenAlgorithmDiffers() {
         // Pinning now compares the algorithm as well as host+port+fingerprint,
         // so a key offered under a different algorithm must not match the pin.
-        val file = File.createTempFile("hostkeys", ".tsv")
-        val store = HostKeyStoreBackend(file)
+        val store = newStore()
         val key = "c3NoLWVkMjU1MTk="
         store.trust("example.com", 22, "ssh-ed25519", key)
 
@@ -42,8 +49,7 @@ class HostKeyTrustStoreTest {
 
     @Test
     fun hasTrustedHost_distinguishesFirstConnectFromKeyChange() {
-        val file = File.createTempFile("hostkeys", ".tsv")
-        val store = HostKeyStoreBackend(file)
+        val store = newStore()
         assertFalse(store.hasTrustedHost("example.com", 22))
         store.trust("example.com", 22, "ssh-ed25519", "c3NoLWVkMjU1MTk=")
         // A different key for the same host still reports the host as pinned,
@@ -54,8 +60,7 @@ class HostKeyTrustStoreTest {
 
     @Test
     fun trust_replacesExistingEntryForSameHostAndPort() {
-        val file = File.createTempFile("hostkeys", ".tsv")
-        val store = HostKeyStoreBackend(file)
+        val store = newStore()
         val oldKey = "c3NoLWVkMjU1MTk="
         val newKey = "c3NoLXJzYQ=="
 
