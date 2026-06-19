@@ -42,7 +42,13 @@ class SshTerminalSession(
         screenUpdater()
     }
     override fun onTitleChanged(changedSession: TerminalSession) = Unit
-    override fun onSessionFinished(finishedSession: TerminalSession) = Unit
+    override fun onSessionFinished(finishedSession: TerminalSession) {
+        // The backing `sleep` subprocess exited. This is expected on explicit
+        // disconnect; log it so an unexpectedly-terminated process (e.g. an
+        // orphan from a reconnect race) is at least observable rather than
+        // silently swallowed (M14).
+        android.util.Log.i("SshTerminalSession", "terminal session finished")
+    }
 
     override fun onCopyTextToClipboard(session: TerminalSession, text: String) {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager

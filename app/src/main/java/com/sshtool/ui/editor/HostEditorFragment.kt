@@ -159,7 +159,7 @@ class HostEditorFragment : Fragment() {
             id = existingHost?.id ?: 0,
             name = binding.etName.text.toString().trim(),
             host = binding.etHost.text.toString().trim(),
-            port = binding.etPort.text.toString().toInt(),
+            port = binding.etPort.text.toString().toIntOrNull() ?: 22,
             username = binding.etUsername.text.toString().trim(),
             useKeyAuth = useKeyAuth,
             lastConnected = existingHost?.lastConnected,
