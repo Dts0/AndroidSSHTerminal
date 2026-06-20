@@ -29,7 +29,8 @@ class PasswordStore(private val context: Context) {
      * as a degraded fallback so the app stays usable. Callers may surface this
      * to the user.
      */
-    val isSecure: Boolean
+    var isSecure: Boolean = false
+        private set
 
     private val prefs: SharedPreferences
 

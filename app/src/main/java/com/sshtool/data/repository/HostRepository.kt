@@ -2,6 +2,7 @@ package com.sshtool.data.repository
 
 import android.content.Context
 import androidx.room.*
+import androidx.room.migration.Migration
 import com.sshtool.data.crypto.PasswordStore
 import com.sshtool.data.model.Host
 import kotlinx.coroutines.flow.Flow
