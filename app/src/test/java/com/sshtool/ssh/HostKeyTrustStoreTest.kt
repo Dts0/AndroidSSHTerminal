@@ -70,4 +70,37 @@ class HostKeyTrustStoreTest {
         assertFalse(store.isTrusted("example.com", 22, "ssh-ed25519", oldKey))
         assertTrue(store.isTrusted("example.com", 22, "ssh-rsa", newKey))
     }
+
+    @Test
+    fun trust_doesNotStoreHostnameInCleartext() {
+        // The hostname must be hashed on disk so the file doesn't leak the
+        // user's SSH host list (m1). "example.com" must not appear verbatim.
+        val file = File.createTempFile("hostkeys", ".tsv", tempFolder.root)
+        val store = HostKeyStoreBackend(file)
+        store.trust("secret.example.com", 2222, "ssh-ed25519", "c3NoLWVkMjU1MTk=")
+
+        val onDisk = file.readText()
+        assertFalse("hostname leaked in cleartext: $onDisk", onDisk.contains("secret.example.com"))
+        // And the stored id is the hashed form.
+        assertTrue(onDisk.contains("h:"))
+    }
+
+    @Test
+    fun migrate_legacyCleartextEntriesAreRehashedOnLoad() {
+        // Write a pre-m1 file with a cleartext hostname, in the old 4-column
+        // layout. Loading through the store must rehash it and still match.
+        val file = File.createTempFile("hostkeys", ".tsv", tempFolder.root)
+        val key = "c3NoLWVkMjU1MTk="
+        // host<TAB>port<TAB>algo<TAB>fingerprint — cleartext host, no "h:" prefix.
+        val cleartextFp = HostKeyStoreBackend(file).fingerprint(key)
+        file.writeText("legacy.example.com\t22\tssh-ed25519\t$cleartextFp\n")
+
+        val store = HostKeyStoreBackend(file)
+        // After load-triggered migration, the cleartext host is recognized.
+        assertTrue(store.isTrusted("legacy.example.com", 22, "ssh-ed25519", key))
+        // And the file on disk no longer contains the cleartext hostname.
+        val onDisk = file.readText()
+        assertFalse("legacy host not migrated: $onDisk", onDisk.contains("legacy.example.com"))
+        assertTrue(onDisk.contains("h:"))
+    }
 }
