@@ -72,6 +72,70 @@ class HostKeyTrustStoreTest {
     }
 
     @Test
+    fun removeHost_dropsAllPinsForHostPort() {
+        // Deleting a host entry must purge its trusted pins so an orphan
+        // fingerprint is not silently reused by a later host of the same
+        // name+port (which would bypass the first-connect TOFU prompt).
+        val store = newStore()
+        val key = "c3NoLWVkMjU1MTk="
+
+        store.trust("example.com", 22, "ssh-ed25519", key)
+        assertTrue(store.hasTrustedHost("example.com", 22))
+
+        store.removeHost("example.com", 22)
+
+        assertFalse(store.hasTrustedHost("example.com", 22))
+        assertFalse(store.isTrusted("example.com", 22, "ssh-ed25519", key))
+    }
+
+    @Test
+    fun removeHost_leavesOtherHostsUntouched() {
+        val store = newStore()
+        val key = "c3NoLWVkMjU1MTk="
+
+        store.trust("example.com", 22, "ssh-ed25519", key)
+        store.trust("other.com", 22, "ssh-ed25519", key)
+        store.trust("example.com", 2222, "ssh-ed25519", key)
+
+        store.removeHost("example.com", 22)
+
+        assertFalse(store.hasTrustedHost("example.com", 22))
+        // Different host on the same port survives.
+        assertTrue(store.hasTrustedHost("other.com", 22))
+        // Same host on a different port survives.
+        assertTrue(store.hasTrustedHost("example.com", 2222))
+    }
+
+    @Test
+    fun removeHost_whenNothingPinnedIsNoOp() {
+        val store = newStore()
+        // Removing a host that was never trusted must not throw and must not
+        // corrupt the store file.
+        store.removeHost("ghost.example.com", 22)
+
+        store.trust("example.com", 22, "ssh-ed25519", "c3NoLWVkMjU1MTk=")
+        assertTrue(store.hasTrustedHost("example.com", 22))
+    }
+
+    @Test
+    fun removeHost_allowsReTrustAfterDeletion() {
+        // The TOFU guarantee: after a host is deleted and re-added, the next
+        // connection must re-prompt because the old pin is gone.
+        val store = newStore()
+        val key = "c3NoLWVkMjU1MTk="
+
+        store.trust("example.com", 22, "ssh-ed25519", key)
+        assertTrue(store.hasTrustedHost("example.com", 22))
+
+        store.removeHost("example.com", 22)
+        assertFalse(store.hasTrustedHost("example.com", 22))
+
+        // Re-trust works as a fresh pin.
+        store.trust("example.com", 22, "ssh-ed25519", key)
+        assertTrue(store.isTrusted("example.com", 22, "ssh-ed25519", key))
+    }
+
+    @Test
     fun trust_doesNotStoreHostnameInCleartext() {
         // The hostname must be hashed on disk so the file doesn't leak the
         // user's SSH host list (m1). "example.com" must not appear verbatim.

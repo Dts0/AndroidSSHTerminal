@@ -5,6 +5,7 @@ import androidx.room.*
 import androidx.room.migration.Migration
 import com.sshtool.data.crypto.PasswordStore
 import com.sshtool.data.model.Host
+import com.sshtool.ssh.HostKeyTrustStore
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -66,6 +67,7 @@ class HostRepository(context: Context) {
 
     private val hostDao = database.hostDao()
     private val passwordStore = PasswordStore(context)
+    private val trustStore = HostKeyTrustStore(context)
 
     fun getAllHosts(): Flow<List<Host>> = hostDao.getAllHosts()
 
@@ -103,6 +105,10 @@ class HostRepository(context: Context) {
         passwordStore.deletePassword(host.id)
         passwordStore.deletePrivateKey(host.id)
         passwordStore.deletePassphrase(host.id)
+        // Drop any trusted host-key pins so an orphan fingerprint is not
+        // silently inherited by a future host of the same name+port (which
+        // would bypass the first-connect TOFU prompt).
+        trustStore.removeHost(host.host, host.port)
         hostDao.deleteHost(host.sanitizedForDatabase())
     }
 

@@ -50,6 +50,23 @@ open class HostKeyStoreBackend(
         storeFile.writeText(entries.joinToString(separator = "\n") { "${it.hostId}\t${it.port}\t${it.algorithm}\t${it.fingerprint}" } + "\n")
     }
 
+    /**
+     * Drop every trusted pin for [host]:[port]. Called when a host entry is
+     * deleted so the store does not accumulate orphan fingerprints — an orphan
+     * would otherwise be silently reused if a host of the same name+port were
+     * recreated later, defeating the TOFU intent (the new host would inherit
+     * the old host's trust without re-prompting). Mirrors the lifecycle of
+     * [PasswordStore] cleanup done by HostRepository.deleteHost.
+     */
+    fun removeHost(host: String, port: Int) {
+        val hostId = hashedHostId(host, port)
+        val remaining = loadEntries().filterNot {
+            it.hostId == hostId && it.port == port
+        }
+        storeFile.writeText(remaining.joinToString(separator = "\n") { "${it.hostId}\t${it.port}\t${it.algorithm}\t${it.fingerprint}" } + "\n")
+    }
+
+
     fun fingerprint(key: String): String {
         val normalized = try {
             Base64.getDecoder().decode(key)

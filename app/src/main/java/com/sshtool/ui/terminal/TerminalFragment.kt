@@ -14,6 +14,8 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.content.res.AppCompatResources
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.lifecycleScope
@@ -77,6 +79,7 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
         setupConnectionStatus()
         setupBackPressHandler()
         setupTabLayout()
+        setupImeResizeListener()
 
         val initialHostId = args.hostId
         if (initialHostId != -1L) {
@@ -136,6 +139,34 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
             override fun logStackTraceWithMessage(tag: String, message: String, e: Exception) { android.util.Log.e(tag, message, e) }
             override fun logStackTrace(tag: String, e: Exception) { android.util.Log.e(tag, e.toString()) }
         })
+    }
+
+    /**
+     * Re-sync the PTY size whenever IME insets change (soft keyboard show/hide).
+     *
+     * TerminalView's own `onSizeChanged` is supposed to fire when adjustResize
+     * shrinks its frame, but on some devices/IMEs (and in headless emulators)
+     * the layout pass either does not happen or races the IME animation, so the
+     * emulator keeps the pre-IME row/column count and the shell output gets
+     * clipped behind the keyboard. Listening to IME insets explicitly and
+     * forcing `TerminalView.updateSize()` after a layout pass is a reliable
+     * belt-and-suspenders fix that re-derives columns/rows from the current
+     * view bounds (now IME-clipped) and pushes them to the SSH PTY via the
+     * existing `onTerminalSizeChanged` callback.
+     */
+    private fun setupImeResizeListener() {
+        val rootView = _binding?.root ?: return
+        ViewCompat.setOnApplyWindowInsetsListener(rootView) { _, insets ->
+            if (insets.isVisible(WindowInsetsCompat.Type.ime())) {
+                // Post so the IME-driven layout pass finishes before we read
+                // the (now smaller) terminal dimensions.
+                binding.terminalView.post {
+                    val b = _binding ?: return@post
+                    b.terminalView.updateSize()
+                }
+            }
+            insets
+        }
     }
 
     private fun setupTerminalInput() {
