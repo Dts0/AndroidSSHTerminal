@@ -81,9 +81,16 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
         setupTabLayout()
         setupImeResizeListener()
 
-        val initialHostId = args.hostId
-        if (initialHostId != -1L) {
-            addSession(initialHostId)
+        // Reattach to any SSH sessions that survived in the SSHConnectionManager
+        // singleton from a previous TerminalFragment instance (background sessions
+        // are kept alive on leaveScreen). Only open a fresh connection when there
+        // are no survivors AND a hostId was passed (i.e. user picked a host).
+        val surviving = manager.getSessionIds()
+        surviving.forEach { id -> reattachSession(id) }
+        when {
+            surviving.isNotEmpty() -> switchToSession(0)
+            args.hostId != -1L -> addSession(args.hostId)
+            else -> findNavController().navigateUp()
         }
     }
 
@@ -369,6 +376,79 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
             val tab = _binding?.tabLayout?.getTabAt(idx)
             tab?.tag = sessionId
         }
+    }
+
+    /**
+     * Reattach to an SSH session that survived in the SSHConnectionManager
+     * after the previous TerminalFragment was destroyed. Builds a fresh
+     * bridge + terminal session and rewires the connection's listener to
+     * them, without opening a new SSH connection.
+     */
+    private fun reattachSession(sessionId: String) {
+        val sessionInfo = manager.getSession(sessionId) ?: return
+        val host = sessionInfo.host
+
+        val bridge = SshTerminalSession(
+            context = requireContext().applicationContext,
+            outputWriter = { data -> sendRawToTerminal(data) },
+            screenUpdater = {
+                val currentBinding = _binding ?: return@SshTerminalSession
+                if (!isAdded) return@SshTerminalSession
+                currentBinding.terminalView.onScreenUpdated()
+            }
+        )
+        val terminalSession = bridge.create()
+
+        val initialConnState = if (manager.isSessionConnected(sessionId))
+            SSHConnectionState.Connected else SSHConnectionState.Disconnected
+
+        val s = SessionState(
+            sessionId = sessionId,
+            host = host,
+            bridge = bridge,
+            terminalSession = terminalSession,
+            connectionState = initialConnState
+        )
+        val idx = sessionStates.size
+        sessionStates.add(s)
+        addTabFor(host, sessionId)
+        binding.terminalView.attachSession(terminalSession)
+        binding.toolbar.title = host.name
+        applyConnectionState(initialConnState)
+        updateTabIndicator(idx, initialConnState)
+
+        val listener = object : SSHConnectionListener {
+            override fun onStateChanged(state: SSHConnectionState) {
+                handler.post {
+                    if (!isAdded || _binding == null) return@post
+                    s.connectionState = state
+                    updateTabIndicator(idx, state)
+                    if (idx == activeIndex) {
+                        applyConnectionState(state)
+                    }
+                }
+            }
+
+            override fun onOutput(data: ByteArray) {
+                handler.post {
+                    if (!isAdded || _binding == null) return@post
+                    bridge.appendOutput(data)
+                }
+            }
+
+            override fun onDisconnected() {
+                handler.post {
+                    if (!isAdded || _binding == null || isLeavingScreen) return@post
+                    s.connectionState = SSHConnectionState.Disconnected
+                    updateTabIndicator(idx, SSHConnectionState.Disconnected)
+                    if (idx == activeIndex) {
+                        applyConnectionState(SSHConnectionState.Disconnected)
+                    }
+                }
+            }
+        }
+
+        manager.reattachListener(sessionId, listener)
     }
 
     private fun reconnectActive() {
@@ -681,7 +761,13 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
     private fun leaveScreen() {
         if (isLeavingScreen) return
         isLeavingScreen = true
-        manager.disconnectAll()
+        // Keep background SSH sessions alive. SSH connections live in the
+        // SSHConnectionManager singleton, independent of this Fragment, and
+        // onDestroyView's finishIfRunning() only kills the local `sleep`
+        // placeholder subprocess (it does not touch JSch). On re-entry,
+        // onViewCreated reattaches surviving sessions instead of opening
+        // duplicates. Disconnect happens explicitly per-session (btnDisconnect)
+        // or when the process dies.
         findNavController().navigateUp()
     }
 
