@@ -59,7 +59,13 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("release")
+            // Only sign when a keystore is actually available; otherwise produce an
+            // unsigned release APK. CI does not build release (release is a local,
+            // developer-owned workflow), so the missing-keystore case must not turn
+            // assembleRelease into a green-but-unsigned trap.
+            if (rootProject.file("keystore.properties").exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

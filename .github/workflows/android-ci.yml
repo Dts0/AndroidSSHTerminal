@@ -58,9 +58,6 @@ jobs:
       - name: Build debug APK
         run: ./gradlew assembleDebug --stacktrace
 
-      - name: Build release APK
-        run: ./gradlew assembleRelease --stacktrace
-
       - name: Upload app APK artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -68,7 +65,6 @@ jobs:
           if-no-files-found: error
           path: |
             app/build/outputs/apk/debug/*.apk
-            app/build/outputs/apk/release/*.apk
 
       - name: Upload lint reports
         if: always()
