@@ -18,9 +18,9 @@ class SshTerminalSession(
 
     fun create(): TerminalSession {
         session = TerminalSession(
-            "/system/bin/sleep",
+            "/system/bin/sh",
             "/",
-            arrayOf("sleep", "3600"),
+            arrayOf("sh", "-c", "while true; do sleep 86400; done"),
             emptyArray(),
             10_000,
             this

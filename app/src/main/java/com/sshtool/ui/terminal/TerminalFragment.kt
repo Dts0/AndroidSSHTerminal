@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -29,6 +30,7 @@ import com.sshtool.databinding.FragmentTerminalBinding
 import com.sshtool.ssh.SSHConnectionListener
 import com.sshtool.ssh.SSHConnectionManager
 import com.sshtool.ssh.SSHConnectionState
+import com.termux.terminal.KeyHandler
 import com.termux.terminal.TerminalSession
 import com.termux.view.TerminalViewClient
 import kotlinx.coroutines.flow.first
@@ -47,6 +49,7 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
 
     private val handler = Handler(Looper.getMainLooper())
     private var ctrlArmed = false
+    private var combiningAccent = 0
     private var terminalFontSize = 14f
 
     private data class SessionState(
@@ -126,14 +129,18 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
             override fun shouldUseCtrlSpaceWorkaround(): Boolean = false
             override fun isTerminalViewSelected(): Boolean = true
             override fun copyModeChanged(copyMode: Boolean) = Unit
-            override fun onKeyDown(keyCode: Int, e: KeyEvent, session: TerminalSession): Boolean = false
+            override fun onKeyDown(keyCode: Int, e: KeyEvent, session: TerminalSession): Boolean =
+                handleTerminalViewKeyDown(keyCode, e, session)
             override fun onKeyUp(keyCode: Int, e: KeyEvent): Boolean = false
             override fun onLongPress(event: MotionEvent): Boolean = false
             override fun readControlKey(): Boolean = ctrlArmed
             override fun readAltKey(): Boolean = false
             override fun readShiftKey(): Boolean = false
             override fun readFnKey(): Boolean = false
-            override fun onCodePoint(codePoint: Int, ctrlDown: Boolean, session: TerminalSession): Boolean = false
+            override fun onCodePoint(codePoint: Int, ctrlDown: Boolean, session: TerminalSession): Boolean {
+                sendCodePointToTerminal(codePoint, ctrlDown || ctrlArmed, altDown = false)
+                return true
+            }
             override fun onEmulatorSet() = Unit
             override fun onTerminalSizeChanged(columns: Int, rows: Int) {
                 manager.updatePtySize(columns, rows)
@@ -482,13 +489,14 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
             if (idx < 0) return@launch
             
             val listener = object : SSHConnectionListener {
-                override fun onStateChanged(connState: SSHConnectionState) {
+                override fun onStateChanged(state: SSHConnectionState) {
                     handler.post {
                         if (!isAdded || _binding == null) return@post
-                        state.connectionState = connState
-                        updateTabIndicator(idx, connState)
+                        val sessionState = sessionStates.getOrNull(idx) ?: return@post
+                        sessionState.connectionState = state
+                        updateTabIndicator(idx, state)
                         if (idx == activeIndex) {
-                            applyConnectionState(connState)
+                            applyConnectionState(state)
                         }
                     }
                 }
@@ -638,7 +646,13 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
             }
             .setPositiveButton(R.string.trust_and_connect) { _, _ ->
                 viewLifecycleOwner.lifecycleScope.launch {
-                    manager.trustAndReconnect(activeState.sessionId, SSHToolApp.instance.hostRepository)
+                    val newSessionId = manager.trustAndReconnect(
+                        activeState.sessionId,
+                        SSHToolApp.instance.hostRepository
+                    )
+                    if (newSessionId != null) {
+                        updateSessionId(activeState, newSessionId)
+                    }
                 }
             }
             .setCancelable(false)
@@ -659,7 +673,13 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
             // path; the repo re-verifies the key on the fresh handshake.
             .setPositiveButton(R.string.trust_and_connect) { _, _ ->
                 viewLifecycleOwner.lifecycleScope.launch {
-                    manager.trustAndReconnect(activeState.sessionId, SSHToolApp.instance.hostRepository)
+                    val newSessionId = manager.trustAndReconnect(
+                        activeState.sessionId,
+                        SSHToolApp.instance.hostRepository
+                    )
+                    if (newSessionId != null) {
+                        updateSessionId(activeState, newSessionId)
+                    }
                 }
             }
             .setCancelable(false)
@@ -681,9 +701,7 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
         binding.btnHome.isEnabled = enabled
         binding.btnEnd.isEnabled = enabled
         if (!enabled) {
-            ctrlArmed = false
-            binding.btnCtrl.isSelected = false
-            binding.btnCtrl.alpha = 0.75f
+            clearCtrlArmed()
             clearInputField()
         }
     }
@@ -695,9 +713,7 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
             .replace('\r', '\n')
             .replace('\n', '\r')
         val payload = if (ctrlArmed && normalizedText.isNotEmpty()) {
-            ctrlArmed = false
-            binding.btnCtrl.isSelected = false
-            binding.btnCtrl.alpha = 0.75f
+            clearCtrlArmed()
             normalizedText.map { ch ->
                 val asciiCode = ch.code and 0x7F
                 if (asciiCode in 64..95 || asciiCode in 97..122) (asciiCode and 0x1F).toChar() else ch
@@ -709,6 +725,121 @@ class TerminalFragment : Fragment(), TerminalInputView.Callback {
     private fun sendRawToTerminal(raw: String) {
         if (!isAdded || _binding == null || !manager.isActiveConnected()) return
         manager.activeConnection?.send(raw)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun handleTerminalViewKeyDown(keyCode: Int, event: KeyEvent, session: TerminalSession): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_BACK ||
+            keyCode == KeyEvent.KEYCODE_LANGUAGE_SWITCH ||
+            (event.isSystem && keyCode != KeyEvent.KEYCODE_ESCAPE)) {
+            return false
+        }
+
+        if (event.action == KeyEvent.ACTION_MULTIPLE && keyCode == KeyEvent.KEYCODE_UNKNOWN) {
+            event.characters?.takeIf { it.isNotEmpty() }?.let { sendTextToTerminal(it) }
+            return true
+        }
+
+        if (!manager.isActiveConnected()) return true
+
+        val controlDown = event.isCtrlPressed || ctrlArmed
+        val leftAltDown = (event.metaState and KeyEvent.META_ALT_LEFT_ON) != 0
+        val altDown = event.isAltPressed || leftAltDown
+        val shiftDown = event.isShiftPressed
+
+        var keyMod = 0
+        if (controlDown) keyMod = keyMod or KeyHandler.KEYMOD_CTRL
+        if (altDown) keyMod = keyMod or KeyHandler.KEYMOD_ALT
+        if (shiftDown) keyMod = keyMod or KeyHandler.KEYMOD_SHIFT
+        if (event.isNumLockOn) keyMod = keyMod or KeyHandler.KEYMOD_NUM_LOCK
+
+        val emulator = session.emulator
+        if (emulator != null) {
+            val code = KeyHandler.getCode(
+                keyCode,
+                keyMod,
+                emulator.isCursorKeysApplicationMode,
+                emulator.isKeypadApplicationMode
+            )
+            if (code != null) {
+                sendRawToTerminal(code)
+                if (ctrlArmed) clearCtrlArmed()
+                return true
+            }
+        }
+
+        val bitsToClear = KeyEvent.META_CTRL_MASK or
+            if ((event.metaState and KeyEvent.META_ALT_RIGHT_ON) == 0) {
+                KeyEvent.META_ALT_ON or KeyEvent.META_ALT_LEFT_ON
+            } else {
+                0
+            }
+        var effectiveMetaState = event.metaState and bitsToClear.inv()
+        if (shiftDown) {
+            effectiveMetaState = effectiveMetaState or KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON
+        }
+
+        val unicode = event.getUnicodeChar(effectiveMetaState)
+        if (unicode == 0) return true
+
+        if ((unicode and KeyCharacterMap.COMBINING_ACCENT) != 0) {
+            if (combiningAccent != 0) {
+                sendCodePointToTerminal(combiningAccent, controlDown, altDown)
+            }
+            combiningAccent = unicode and KeyCharacterMap.COMBINING_ACCENT_MASK
+            return true
+        }
+
+        val codePoint = if (combiningAccent != 0) {
+            KeyCharacterMap.getDeadChar(combiningAccent, unicode).takeIf { it > 0 } ?: unicode
+        } else {
+            unicode
+        }
+        combiningAccent = 0
+        sendCodePointToTerminal(codePoint, controlDown, altDown)
+        return true
+    }
+
+    private fun sendCodePointToTerminal(codePoint: Int, controlDown: Boolean, altDown: Boolean) {
+        var value = codePoint
+        if (controlDown) {
+            value = when {
+                value in 'a'.code..'z'.code -> value - 'a'.code + 1
+                value in 'A'.code..'Z'.code -> value - 'A'.code + 1
+                value == ' '.code || value == '2'.code -> 0
+                value == '['.code || value == '3'.code -> 27
+                value == '\\'.code || value == '4'.code -> 28
+                value == ']'.code || value == '5'.code -> 29
+                value == '^'.code || value == '6'.code -> 30
+                value == '_'.code || value == '7'.code || value == '/'.code -> 31
+                value == '8'.code -> 127
+                else -> value
+            }
+        }
+        val text = if (value == 0) {
+            "\u0000"
+        } else {
+            String(Character.toChars(value))
+        }
+        sendRawToTerminal(if (altDown) "\u001B$text" else text)
+        if (ctrlArmed) clearCtrlArmed()
+    }
+
+    private fun updateSessionId(state: SessionState, newSessionId: String) {
+        state.sessionId = newSessionId
+        val idx = sessionStates.indexOf(state)
+        if (idx >= 0) {
+            _binding?.tabLayout?.getTabAt(idx)?.tag = newSessionId
+        }
+        if (state == getActiveState() && state.connectionState is SSHConnectionState.Connected) {
+            syncPtySizeFromEmulator()
+        }
+    }
+
+    private fun clearCtrlArmed() {
+        ctrlArmed = false
+        _binding?.btnCtrl?.isSelected = false
+        _binding?.btnCtrl?.alpha = 0.75f
     }
 
     private fun clearInputField() {

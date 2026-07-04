@@ -57,12 +57,6 @@ class HostRepository(context: Context) {
         "ssh_tool_db"
     )
         .addMigrations(*AppDatabase.MIGRATIONS)
-        // Safety net: if a schema change ships without an explicit migration
-        // (or the installed DB is newer than the code knows about), recreate
-        // the DB instead of crashing on launch and bricking the app. Host
-        // metadata is lost in that case, but secrets live in PasswordStore and
-        // survive. Always prefer adding a real migration above.
-        .fallbackToDestructiveMigration()
         .build()
 
     private val hostDao = database.hostDao()
@@ -141,4 +135,3 @@ internal fun Host.sanitizeForDatabase(): Host = copy().also {
     it.privateKey = null
     it.passphrase = null
 }
-

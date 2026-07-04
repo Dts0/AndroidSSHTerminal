@@ -8,6 +8,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("androidx.navigation.safeargs.kotlin")
+    id("androidx.room")
     // kapt is used for the Room compiler. KSP is the recommended, faster
     // replacement (Room 2.6.1 supports it); migrate by adding the
     // com.google.devtools.ksp plugin (1.9.20-1.0.14) and switching the
@@ -19,13 +20,14 @@ plugins {
 android {
     namespace = "com.sshtool"
     compileSdk = 34
+    ndkVersion = System.getenv("JITPACK_NDK_VERSION") ?: "27.0.12077973"
 
     defaultConfig {
         applicationId = "com.sshtool"
         minSdk = 26
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.1.0"
+        versionCode = 4
+        versionName = "1.1.1"
 
         val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
         val buildTime = sdf.format(Date())
@@ -59,10 +61,9 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Only sign when a keystore is actually available; otherwise produce an
-            // unsigned release APK. CI does not build release (release is a local,
-            // developer-owned workflow), so the missing-keystore case must not turn
-            // assembleRelease into a green-but-unsigned trap.
+            // Only sign when a keystore is actually available. CI still builds
+            // release to verify packaging/R8, but without local signing material
+            // the artifact is intentionally unsigned.
             if (rootProject.file("keystore.properties").exists()) {
                 signingConfig = signingConfigs.getByName("release")
             }
@@ -82,6 +83,16 @@ android {
         viewBinding = true
         buildConfig = true
     }
+
+    packaging {
+        resources {
+            excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+        }
+    }
+}
+
+room {
+    schemaDirectory("$projectDir/schemas")
 }
 
 dependencies {
@@ -100,7 +111,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.7.0")
 
     // Security - Encrypted SharedPreferences
-    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    implementation("androidx.security:security-crypto:1.1.0")
     implementation("com.google.code.findbugs:jsr305:3.0.2")
 
     // JSch for SSH
@@ -142,4 +153,3 @@ if (System.getenv("CI") == null) {
         }
     }
 }
-

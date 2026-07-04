@@ -117,7 +117,7 @@ class SSHConnectionManager {
                 id = sessionId,
                 host = host,
                 connection = connection,
-                listener = wrappedListener
+                listener = listener
             )
             activeSessionId = sessionId
         }
@@ -126,26 +126,31 @@ class SSHConnectionManager {
         return sessionId
     }
 
-    suspend fun trustAndReconnect(sessionId: String, repository: HostRepository) {
+    suspend fun trustAndReconnect(sessionId: String, repository: HostRepository): String? {
         val host: Host
         val currentListener: SSHConnectionListener
         val connection: SSHConnection
         synchronized(lock) {
-            val session = sessions[sessionId] ?: return
+            val session = sessions[sessionId] ?: return null
             host = session.host
             currentListener = session.listener
             connection = session.connection
         }
         val trusted = connection.trustCurrentHostKey()
+        // Suppress the intentionally destroyed pre-trust connection from
+        // racing a stale Disconnected event into the UI after the fresh
+        // post-trust session is registered.
+        connection.listener = null
         connection.destroy()
         synchronized(lock) {
             sessions.remove(sessionId)
             if (activeSessionId == sessionId) activeSessionId = null
         }
-        if (trusted) {
+        return if (trusted) {
             connect(host, repository, currentListener)
         } else {
             currentListener.onStateChanged(SSHConnectionState.Error("无法保存主机指纹"))
+            null
         }
     }
 

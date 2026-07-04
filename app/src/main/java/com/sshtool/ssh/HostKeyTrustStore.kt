@@ -2,6 +2,8 @@ package com.sshtool.ssh
 
 import android.content.Context
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.Base64
 
@@ -10,18 +12,21 @@ class HostKeyTrustStore(context: Context) : HostKeyStoreBackend(File(context.fil
 open class HostKeyStoreBackend(
     private val storeFile: File
 ) {
+    private val lock = lockFor(storeFile.absoluteFile)
 
     init {
-        if (!storeFile.exists()) {
-            storeFile.parentFile?.mkdirs()
-            storeFile.createNewFile()
+        synchronized(lock) {
+            if (!storeFile.exists()) {
+                storeFile.parentFile?.mkdirs()
+                storeFile.createNewFile()
+            }
         }
     }
 
     fun isTrusted(host: String, port: Int, algorithm: String, key: String): Boolean {
         val expected = fingerprint(key)
         val hostId = hashedHostId(host, port)
-        return loadEntries().any {
+        return synchronized(lock) { loadEntriesLocked() }.any {
             it.hostId == hostId &&
                 it.port == port &&
                 it.algorithm == algorithm &&
@@ -37,17 +42,21 @@ open class HostKeyStoreBackend(
      */
     fun hasTrustedHost(host: String, port: Int): Boolean {
         val hostId = hashedHostId(host, port)
-        return loadEntries().any { it.hostId == hostId && it.port == port }
+        return synchronized(lock) {
+            loadEntriesLocked().any { it.hostId == hostId && it.port == port }
+        }
     }
 
     fun trust(host: String, port: Int, algorithm: String, key: String) {
         val fingerprint = fingerprint(key)
         val hostId = hashedHostId(host, port)
-        val entries = loadEntries().filterNot {
-            it.hostId == hostId && it.port == port
-        }.toMutableList()
-        entries += Entry(hostId, port, algorithm, fingerprint)
-        storeFile.writeText(entries.joinToString(separator = "\n") { "${it.hostId}\t${it.port}\t${it.algorithm}\t${it.fingerprint}" } + "\n")
+        synchronized(lock) {
+            val entries = loadEntriesLocked().filterNot {
+                it.hostId == hostId && it.port == port
+            }.toMutableList()
+            entries += Entry(hostId, port, algorithm, fingerprint)
+            writeEntriesLocked(entries)
+        }
     }
 
     /**
@@ -60,10 +69,12 @@ open class HostKeyStoreBackend(
      */
     fun removeHost(host: String, port: Int) {
         val hostId = hashedHostId(host, port)
-        val remaining = loadEntries().filterNot {
-            it.hostId == hostId && it.port == port
+        synchronized(lock) {
+            val remaining = loadEntriesLocked().filterNot {
+                it.hostId == hostId && it.port == port
+            }
+            writeEntriesLocked(remaining)
         }
-        storeFile.writeText(remaining.joinToString(separator = "\n") { "${it.hostId}\t${it.port}\t${it.algorithm}\t${it.fingerprint}" } + "\n")
     }
 
 
@@ -97,7 +108,7 @@ open class HostKeyStoreBackend(
         return "h:" + md.digest().joinToString(separator = "") { "%02x".format(it) }
     }
 
-    private fun loadEntries(): List<Entry> {
+    private fun loadEntriesLocked(): List<Entry> {
         if (!storeFile.exists()) return emptyList()
         val raw = storeFile.readLines().mapNotNull { line ->
             val parts = line.split('\t')
@@ -117,10 +128,34 @@ open class HostKeyStoreBackend(
                     e.copy(hostId = hashedHostId(e.hostId, e.port))
                 }
             }
-            storeFile.writeText(migrated.joinToString(separator = "\n") { "${it.hostId}\t${it.port}\t${it.algorithm}\t${it.fingerprint}" } + "\n")
+            writeStoredEntriesLocked(migrated)
             return migrated.map { Entry(it.hostId, it.port, it.algorithm, it.fingerprint) }
         }
         return raw.map { Entry(it.hostId, it.port, it.algorithm, it.fingerprint) }
+    }
+
+    private fun writeEntriesLocked(entries: List<Entry>) {
+        writeStoredEntriesLocked(entries.map { StoredEntry(it.hostId, it.port, it.algorithm, it.fingerprint) })
+    }
+
+    private fun writeStoredEntriesLocked(entries: List<StoredEntry>) {
+        val text = entries.joinToString(separator = "\n") {
+            "${it.hostId}\t${it.port}\t${it.algorithm}\t${it.fingerprint}"
+        }.let { if (it.isEmpty()) "" else "$it\n" }
+        val parent = storeFile.parentFile ?: File(".")
+        parent.mkdirs()
+        val tmp = File(parent, "${storeFile.name}.tmp")
+        tmp.writeText(text)
+        try {
+            Files.move(
+                tmp.toPath(),
+                storeFile.toPath(),
+                StandardCopyOption.REPLACE_EXISTING,
+                StandardCopyOption.ATOMIC_MOVE
+            )
+        } catch (_: Exception) {
+            Files.move(tmp.toPath(), storeFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
     }
 
     private data class StoredEntry(
@@ -138,6 +173,12 @@ open class HostKeyStoreBackend(
     )
 
     private companion object {
+        private val LOCKS = mutableMapOf<String, Any>()
+
+        fun lockFor(file: File): Any = synchronized(LOCKS) {
+            LOCKS.getOrPut(file.absolutePath) { Any() }
+        }
+
         // App-level salt for hostname hashing. Not a secret — it only prevents
         // trivial rainbow-table reuse against this specific file.
         const val SALT = "sshtool-trusted-hosts-v1"
