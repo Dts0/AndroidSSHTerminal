@@ -32,6 +32,17 @@ public final class TerminalSession extends TerminalOutput {
 
     private static final int MSG_NEW_INPUT = 1;
     private static final int MSG_PROCESS_EXITED = 4;
+    /** A remote session has no local process. Keep the sentinel negative so it
+     * can never be passed to {@link Os#kill(int, int)} by mistake. */
+    private static final int REMOTE_SESSION_PID = -2;
+
+    /** Raw byte sink used by sessions whose process lives outside Android's
+     * local PTY (for example an SSH channel). The byte range is only guaranteed
+     * to remain valid for the duration of the callback. */
+    @FunctionalInterface
+    public interface ByteOutput {
+        void write(byte[] data, int offset, int count);
+    }
 
     public final String mHandle = UUID.randomUUID().toString();
 
@@ -53,7 +64,8 @@ public final class TerminalSession extends TerminalOutput {
     /** Callback which gets notified when a session finishes or changes title. */
     TerminalSessionClient mClient;
 
-    /** The pid of the shell process. 0 if not started and -1 if finished running. */
+    /** The pid of the shell process. 0 if not started, -1 if finished, and
+     * {@link #REMOTE_SESSION_PID} for a live remote session. */
     int mShellPid;
 
     /** The exit status of the shell process. Only valid if ${@link #mShellPid} is -1. */
@@ -63,18 +75,19 @@ public final class TerminalSession extends TerminalOutput {
      * The file descriptor referencing the master half of a pseudo-terminal pair, resulting from calling
      * {@link JNI#createSubprocess(String, String, String[], String[], int[], int, int, int, int)}.
      */
-    private int mTerminalFileDescriptor;
+    private int mTerminalFileDescriptor = -1;
 
     /** Set by the application for user identification of session, not by terminal. */
     public String mSessionName;
 
-    final Handler mMainThreadHandler = new MainThreadHandler();
+    Handler mMainThreadHandler;
 
     private final String mShellPath;
     private final String mCwd;
     private final String[] mArgs;
     private final String[] mEnv;
     private final Integer mTranscriptRows;
+    private final ByteOutput mRemoteOutput;
 
 
     private static final String LOG_TAG = "TerminalSession";
@@ -86,6 +99,24 @@ public final class TerminalSession extends TerminalOutput {
         this.mEnv = env;
         this.mTranscriptRows = transcriptRows;
         this.mClient = client;
+        this.mRemoteOutput = null;
+    }
+
+    /**
+     * Construct a terminal emulator backed by an external raw byte stream.
+     * No local subprocess or PTY is created. Call {@link #updateSize(int, int,
+     * int, int)} before feeding remote output so the emulator is initialized.
+     */
+    public TerminalSession(Integer transcriptRows, TerminalSessionClient client, ByteOutput remoteOutput) {
+        if (remoteOutput == null) throw new IllegalArgumentException("remoteOutput must not be null");
+        this.mShellPath = null;
+        this.mCwd = null;
+        this.mArgs = null;
+        this.mEnv = null;
+        this.mTranscriptRows = transcriptRows;
+        this.mClient = client;
+        this.mRemoteOutput = remoteOutput;
+        this.mShellPid = REMOTE_SESSION_PID;
     }
 
     /**
@@ -104,7 +135,11 @@ public final class TerminalSession extends TerminalOutput {
         if (mEmulator == null) {
             initializeEmulator(columns, rows, cellWidthPixels, cellHeightPixels);
         } else {
-            JNI.setPtyWindowSize(mTerminalFileDescriptor, rows, columns, cellWidthPixels, cellHeightPixels);
+            // Remote sessions deliberately have no PTY file descriptor. Their
+            // owner forwards rows/columns to the actual remote PTY separately.
+            if (mRemoteOutput == null && mTerminalFileDescriptor >= 0) {
+                JNI.setPtyWindowSize(mTerminalFileDescriptor, rows, columns, cellWidthPixels, cellHeightPixels);
+            }
             mEmulator.resize(columns, rows, cellWidthPixels, cellHeightPixels);
         }
     }
@@ -121,7 +156,15 @@ public final class TerminalSession extends TerminalOutput {
      * @param rows    The number of rows in the terminal window.
      */
     public void initializeEmulator(int columns, int rows, int cellWidthPixels, int cellHeightPixels) {
+        if (mEmulator != null) return;
         mEmulator = new TerminalEmulator(this, columns, rows, cellWidthPixels, cellHeightPixels, mTranscriptRows, mClient);
+
+        if (mRemoteOutput != null) {
+            mClient.setTerminalShellPid(this, REMOTE_SESSION_PID);
+            return;
+        }
+
+        mMainThreadHandler = new MainThreadHandler();
 
         int[] processId = new int[1];
         mTerminalFileDescriptor = JNI.createSubprocess(mShellPath, mCwd, mArgs, mEnv, processId, rows, columns, cellWidthPixels, cellHeightPixels);
@@ -176,7 +219,22 @@ public final class TerminalSession extends TerminalOutput {
     /** Write data to the shell process. */
     @Override
     public void write(byte[] data, int offset, int count) {
-        if (mShellPid > 0) mTerminalToProcessIOQueue.write(data, offset, count);
+        if (data == null || count <= 0 || offset < 0 || offset > data.length || count > data.length - offset) return;
+        if (mRemoteOutput != null) {
+            if (isRunning()) mRemoteOutput.write(data, offset, count);
+        } else if (mShellPid > 0) {
+            mTerminalToProcessIOQueue.write(data, offset, count);
+        }
+    }
+
+    /** Feed bytes received from an external process into the emulator. */
+    public void appendOutput(byte[] data, int offset, int count) {
+        if (mRemoteOutput == null) throw new IllegalStateException("appendOutput is only valid for remote sessions");
+        if (!isRunning()) return;
+        if (mEmulator == null) throw new IllegalStateException("updateSize must initialize the emulator before appendOutput");
+        if (data == null || count <= 0 || offset < 0 || offset > data.length || count > data.length - offset) return;
+        mEmulator.append(data, offset, count);
+        notifyScreenUpdate();
     }
 
     /** Write the Unicode code point to the terminal encoded in UTF-8. */
@@ -233,7 +291,17 @@ public final class TerminalSession extends TerminalOutput {
 
     /** Finish this terminal session by sending SIGKILL to the shell. */
     public void finishIfRunning() {
-        if (isRunning()) {
+        if (mRemoteOutput != null) {
+            boolean notifyFinished = false;
+            synchronized (this) {
+                if (mShellPid == REMOTE_SESSION_PID) {
+                    mShellPid = -1;
+                    mShellExitStatus = 0;
+                    notifyFinished = true;
+                }
+            }
+            if (notifyFinished) mClient.onSessionFinished(this);
+        } else if (isRunning()) {
             try {
                 Os.kill(mShellPid, OsConstants.SIGKILL);
             } catch (ErrnoException e) {
@@ -252,7 +320,10 @@ public final class TerminalSession extends TerminalOutput {
         // Stop the reader and writer threads, and close the I/O streams
         mTerminalToProcessIOQueue.close();
         mProcessToTerminalIOQueue.close();
-        JNI.close(mTerminalFileDescriptor);
+        if (mTerminalFileDescriptor >= 0) {
+            JNI.close(mTerminalFileDescriptor);
+            mTerminalFileDescriptor = -1;
+        }
     }
 
     @Override
@@ -261,7 +332,7 @@ public final class TerminalSession extends TerminalOutput {
     }
 
     public synchronized boolean isRunning() {
-        return mShellPid != -1;
+        return mRemoteOutput != null ? mShellPid == REMOTE_SESSION_PID : mShellPid > 0;
     }
 
     /** Only valid if not {@link #isRunning()}. */

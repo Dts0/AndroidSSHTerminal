@@ -6,6 +6,19 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import java.io.IOException
+
+data class StoredCredentials(
+    val password: String? = null,
+    val privateKey: String? = null,
+    val passphrase: String? = null
+)
+
+interface CredentialStore {
+    fun requireAvailable()
+    fun getCredentials(hostId: Long): StoredCredentials
+    fun replaceCredentials(hostId: Long, credentials: StoredCredentials)
+}
 
 /**
  * 安全的密码存储，使用 Android Keystore 加密。
@@ -15,7 +28,7 @@ import androidx.security.crypto.MasterKey
  * 异常。这里选择 fail closed：应用仍可打开主机列表，但不会把 SSH 凭据
  * 降级保存到明文 SharedPreferences。
  */
-class PasswordStore(private val context: Context) {
+class PasswordStore(context: Context) : CredentialStore {
 
     companion object {
         private const val PREFS_NAME = "ssh_passwords"
@@ -55,64 +68,119 @@ class PasswordStore(private val context: Context) {
     /**
      * 保存密码
      */
+    @Synchronized
     fun savePassword(hostId: Long, password: String) {
-        securePrefs().edit().putString("password_$hostId", password).apply()
+        replaceCredentials(hostId, getCredentials(hostId).copy(password = password))
     }
 
     /**
      * 获取密码
      */
-    fun getPassword(hostId: Long): String? {
-        return prefs?.getString("password_$hostId", null)
-    }
+    fun getPassword(hostId: Long): String? = readString("password_$hostId")
 
     /**
      * 删除密码
      */
+    @Synchronized
     fun deletePassword(hostId: Long) {
-        prefs?.edit()?.remove("password_$hostId")?.apply()
+        if (prefs == null) return
+        replaceCredentials(hostId, getCredentials(hostId).copy(password = null))
     }
 
     /**
      * 保存私钥
      */
+    @Synchronized
     fun savePrivateKey(hostId: Long, privateKey: String) {
-        securePrefs().edit().putString("privateKey_$hostId", privateKey).apply()
+        replaceCredentials(hostId, getCredentials(hostId).copy(privateKey = privateKey))
     }
 
     /**
      * 获取私钥
      */
-    fun getPrivateKey(hostId: Long): String? {
-        return prefs?.getString("privateKey_$hostId", null)
-    }
+    fun getPrivateKey(hostId: Long): String? = readString("privateKey_$hostId")
 
     /**
      * 删除私钥
      */
+    @Synchronized
     fun deletePrivateKey(hostId: Long) {
-        prefs?.edit()?.remove("privateKey_$hostId")?.apply()
+        if (prefs == null) return
+        replaceCredentials(hostId, getCredentials(hostId).copy(privateKey = null))
     }
 
     /**
      * 保存 passphrase
      */
+    @Synchronized
     fun savePassphrase(hostId: Long, passphrase: String) {
-        securePrefs().edit().putString("passphrase_$hostId", passphrase).apply()
+        replaceCredentials(hostId, getCredentials(hostId).copy(passphrase = passphrase))
     }
 
     /**
      * 获取 passphrase
      */
-    fun getPassphrase(hostId: Long): String? {
-        return prefs?.getString("passphrase_$hostId", null)
-    }
+    fun getPassphrase(hostId: Long): String? = readString("passphrase_$hostId")
 
     /**
      * 删除 passphrase
      */
+    @Synchronized
     fun deletePassphrase(hostId: Long) {
-        prefs?.edit()?.remove("passphrase_$hostId")?.apply()
+        if (prefs == null) return
+        replaceCredentials(hostId, getCredentials(hostId).copy(passphrase = null))
+    }
+
+    override fun requireAvailable() {
+        securePrefs()
+    }
+
+    /**
+     * Read all credentials as one logical record. Per-value decryption failures
+     * are surfaced as an explicit unavailable-store error instead of being
+     * mistaken for a user who never saved a credential.
+     */
+    @Synchronized
+    override fun getCredentials(hostId: Long): StoredCredentials {
+        // An unavailable Keystore is not equivalent to an account with no
+        // saved secret. Surface it so callers do not misreport the failure as
+        // an ordinary SSH authentication error.
+        requireAvailable()
+        return StoredCredentials(
+            password = readString("password_$hostId"),
+            privateKey = readString("privateKey_$hostId"),
+            passphrase = readString("passphrase_$hostId")
+        )
+    }
+
+    /**
+     * Replace all credential fields with one SharedPreferences transaction.
+     * commit() is intentional: callers use its result for repository rollback,
+     * which is impossible with fire-and-forget apply(). This method is called on
+     * Dispatchers.IO by HostRepository.
+     */
+    @Synchronized
+    override fun replaceCredentials(hostId: Long, credentials: StoredCredentials) {
+        val editor = securePrefs().edit()
+        editor.putOrRemove("password_$hostId", credentials.password)
+        editor.putOrRemove("privateKey_$hostId", credentials.privateKey)
+        editor.putOrRemove("passphrase_$hostId", credentials.passphrase)
+        if (!editor.commit()) {
+            throw IOException("安全凭据写入失败")
+        }
+    }
+
+    private fun readString(key: String): String? {
+        val currentPrefs = securePrefs()
+        return try {
+            currentPrefs.getString(key, null)
+        } catch (e: Exception) {
+            throw IllegalStateException("安全凭据存储不可用，请检查 Android Keystore 状态后重试。", e)
+        }
+    }
+
+    private fun SharedPreferences.Editor.putOrRemove(key: String, value: String?) {
+        if (value == null) remove(key) else putString(key, value)
     }
 
     private fun securePrefs(): SharedPreferences =

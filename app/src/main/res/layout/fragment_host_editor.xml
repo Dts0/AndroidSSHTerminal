@@ -147,13 +147,14 @@
                     android:id="@+id/et_password"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:saveEnabled="false"
                     android:inputType="textPassword" />
 
             </com.google.android.material.textfield.TextInputLayout>
 
             <!-- 私钥输入 -->
             <LinearLayout
-                android:id="@+id/layout_private_key"
+                android:id="@+id/layout_key_auth"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
@@ -161,6 +162,7 @@
                 tools:visibility="visible">
 
                 <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/layout_private_key"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
@@ -171,6 +173,7 @@
                         android:id="@+id/et_private_key"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
+                        android:saveEnabled="false"
                         android:inputType="textMultiLine|textVisiblePassword"
                         android:minLines="5"
                         android:fontFamily="monospace"
@@ -179,6 +182,7 @@
                 </com.google.android.material.textfield.TextInputLayout>
 
                 <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/layout_passphrase"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
@@ -190,6 +194,7 @@
                         android:id="@+id/et_passphrase"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
+                        android:saveEnabled="false"
                         android:inputType="textPassword" />
 
                 </com.google.android.material.textfield.TextInputLayout>

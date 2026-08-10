@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - main_dev
       - master
       - 'feature/**'
       - 'fix/**'
@@ -61,14 +62,119 @@ jobs:
       - name: Build release APK
         run: ./gradlew assembleRelease --stacktrace
 
-      - name: Upload app APK artifacts
+      - name: Verify 16 KiB native compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          readelf="$ANDROID_SDK_ROOT/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          native_lib_dir="app/build/intermediates/merged_native_libs/release/out/lib"
+          apkanalyzer="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/apkanalyzer"
+
+          test -x "$readelf"
+          test -d "$native_lib_dir"
+          test -x "$apkanalyzer"
+
+          shopt -s nullglob
+          release_apks=(app/build/outputs/apk/release/*.apk)
+          if (( ${#release_apks[@]} != 1 )); then
+            echo "::error file=app/build/outputs/apk/release::Expected exactly one release APK, found ${#release_apks[@]}"
+            exit 1
+          fi
+          release_apk="${release_apks[0]}"
+
+          expected_abis=(arm64-v8a armeabi-v7a x86 x86_64)
+          for abi in "${expected_abis[@]}"; do
+            library="$native_lib_dir/$abi/libtermux.so"
+            if [[ ! -f "$library" ]]; then
+              echo "::error file=$native_lib_dir::Missing libtermux.so for ABI $abi"
+              exit 1
+            fi
+            mapfile -t load_alignments < <(
+              "$readelf" --program-headers --wide "$library" |
+                awk '$1 == "LOAD" { print $NF }'
+            )
+            if (( ${#load_alignments[@]} == 0 )); then
+              echo "::error file=$library::ELF has no PT_LOAD segments"
+              exit 1
+            fi
+            for alignment in "${load_alignments[@]}"; do
+              if (( alignment < 0x4000 )); then
+                echo "::error file=$library::PT_LOAD alignment $alignment is below 16 KiB"
+                exit 1
+              fi
+            done
+          done
+
+          manifest="$("$apkanalyzer" manifest print "$release_apk")"
+          if ! grep -q 'android:extractNativeLibs="true"' <<< "$manifest"; then
+            echo "::error file=$release_apk::APK must extract compressed JNI libraries on install"
+            exit 1
+          fi
+
+          command -v unzip >/dev/null
+          # Info-ZIP `unzip -lv` columns are: Length, Method, Size, Cmpr,
+          # Date, Time, CRC-32, Name. Require every configured ABI and a
+          # Deflate method for every JNI entry.
+          if ! unzip -lv "$release_apk" | awk '
+              BEGIN {
+                required["lib/arm64-v8a/libtermux.so"] = 1
+                required["lib/armeabi-v7a/libtermux.so"] = 1
+                required["lib/x86/libtermux.so"] = 1
+                required["lib/x86_64/libtermux.so"] = 1
+              }
+              $8 ~ /^lib\/.+\.so$/ {
+                found = 1
+                delete required[$8]
+                if ($2 !~ /^Defl/) exit 1
+              }
+              END {
+                for (library in required) missing = 1
+                if (!found || missing) exit 2
+              }
+            '; then
+            echo "::error file=$release_apk::APK JNI entries are missing or not compressed"
+            exit 1
+          fi
+
+      - name: Stage verified signed release APKs
+        id: signed_release
+        shell: bash
+        env:
+          SIGNED_RELEASE_DIR: ${{ runner.temp }}/signed-release-apks
+        run: |
+          set -euo pipefail
+          apksigner="$ANDROID_SDK_ROOT/build-tools/34.0.0/apksigner"
+          test -x "$apksigner"
+          mkdir -p "$SIGNED_RELEASE_DIR"
+
+          shopt -s nullglob
+          release_apks=(app/build/outputs/apk/release/*.apk)
+          signed=false
+          for apk in "${release_apks[@]}"; do
+            if "$apksigner" verify --verbose "$apk"; then
+              cp -- "$apk" "$SIGNED_RELEASE_DIR/"
+              signed=true
+            else
+              echo "::notice file=$apk::Unsigned release APK will not be uploaded"
+            fi
+          done
+          echo "available=$signed" >> "$GITHUB_OUTPUT"
+
+      - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: sshtool-apks-${{ github.run_number }}
+          name: sshtool-debug-${{ github.run_number }}
           if-no-files-found: error
-          path: |
-            app/build/outputs/apk/debug/*.apk
-            app/build/outputs/apk/release/*.apk
+          path: app/build/outputs/apk/debug/*.apk
+
+      - name: Upload verified signed release APK artifact
+        if: steps.signed_release.outputs.available == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshtool-signed-release-${{ github.run_number }}
+          if-no-files-found: error
+          path: ${{ runner.temp }}/signed-release-apks/*.apk
 
       - name: Upload lint reports
         if: always()

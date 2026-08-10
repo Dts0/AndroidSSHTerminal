@@ -1,6 +1,7 @@
 package com.termux.terminal;
 
 import java.io.UnsupportedEncodingException;
+import java.util.Locale;
 
 public class TerminalTest extends TerminalTestCase {
 
@@ -63,6 +64,19 @@ public class TerminalTest extends TerminalTestCase {
 		assertEquals("\033[<0;1;1M", mOutput.getOutputAndClear());
 		mTerminal.sendMouseEvent(TerminalEmulator.MOUSE_LEFT_BUTTON, 11, 11, false);
 		assertEquals("\033[<0;10;10m", mOutput.getOutputAndClear());
+	}
+
+	public void testSgrMouseProtocolAlwaysUsesAsciiDigits() throws Exception {
+		Locale original = Locale.getDefault();
+		try {
+			Locale.setDefault(new Locale("ar", "EG"));
+			withTerminalSized(10, 10);
+			enterString("\033[?1000h\033[?1006h");
+			mTerminal.sendMouseEvent(TerminalEmulator.MOUSE_LEFT_BUTTON, 3, 4, true);
+			assertEquals("\033[<0;3;4M", mOutput.getOutputAndClear());
+		} finally {
+			Locale.setDefault(original);
+		}
 	}
 
 	public void testNormalization() throws UnsupportedEncodingException {

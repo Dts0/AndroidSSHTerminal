@@ -85,6 +85,12 @@ android {
     }
 
     packaging {
+        // AGP 8.2 cannot reliably 16 KiB-align uncompressed JNI entries in
+        // the APK. Compress them so PackageManager extracts the already
+        // 16 KiB-compatible ELF files at install time.
+        jniLibs {
+            useLegacyPackaging = true
+        }
         resources {
             excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
         }
@@ -138,14 +144,21 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
 }
 
-// Local-only: copy APK to /workspace/apk after each debug build
-// CI does not need this — the task is skipped when CI=true
-if (System.getenv("CI") == null) {
+// Optional local convenience copy. It is disabled unless the caller opts in:
+// ./gradlew assembleDebug -PapkOutputDir=/workspace/apk
+// SSHTERMINAL_APK_OUTPUT_DIR=/workspace/apk ./gradlew assembleDebug
+val externalApkOutputDir = providers.gradleProperty("apkOutputDir")
+    .orElse(providers.environmentVariable("SSHTERMINAL_APK_OUTPUT_DIR"))
+    .orNull
+    ?.trim()
+    ?.takeIf(String::isNotEmpty)
+
+if (externalApkOutputDir != null) {
     afterEvaluate {
         tasks.register<Copy>("copyApkToOutput") {
             from(layout.buildDirectory.dir("outputs/apk/debug"))
             include("*.apk")
-            into("/workspace/apk")
+            into(externalApkOutputDir)
             rename { "SSHTerminal-debug.apk" }
         }
         tasks.named("assembleDebug") {

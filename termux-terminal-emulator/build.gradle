@@ -13,6 +13,9 @@ android {
 
         externalNativeBuild {
             ndkBuild {
+                // Emit ELF LOAD segments that are safe on both 4 KiB and
+                // Android 15+ 16 KiB page-size devices (NDK r27+).
+                arguments "APP_SUPPORT_FLEXIBLE_PAGE_SIZES=true"
                 cFlags "-std=c11", "-Wall", "-Wextra", "-Werror", "-Os", "-fstack-protector-strong", "-Wl,--gc-sections"
             }
         }

@@ -371,7 +371,7 @@ public final class TerminalEmulator {
         if (mouseButton == MOUSE_LEFT_BUTTON_MOVED && !isDecsetInternalBitSet(DECSET_BIT_MOUSE_TRACKING_BUTTON_EVENT)) {
             // Do not send tracking.
         } else if (isDecsetInternalBitSet(DECSET_BIT_MOUSE_PROTOCOL_SGR)) {
-            mSession.write(String.format("\033[<%d;%d;%d" + (pressed ? 'M' : 'm'), mouseButton, column, row));
+            mSession.write(String.format(Locale.US, "\033[<%d;%d;%d" + (pressed ? 'M' : 'm'), mouseButton, column, row));
         } else {
             mouseButton = pressed ? mouseButton : 3; // 3 for release of all buttons.
             // Clip to screen, and clip to the limits of 8-bit data.
@@ -498,7 +498,13 @@ public final class TerminalEmulator {
      * @param length the number of bytes in the array to process
      */
     public void append(byte[] buffer, int length) {
-        for (int i = 0; i < length; i++)
+        append(buffer, 0, length);
+    }
+
+    /** Accept a byte range without requiring callers to allocate a slice. */
+    public void append(byte[] buffer, int offset, int length) {
+        if (buffer == null || offset < 0 || length < 0 || offset > buffer.length || length > buffer.length - offset) return;
+        for (int i = offset; i < offset + length; i++)
             processByte(buffer[i]);
     }
 
@@ -2594,9 +2600,10 @@ public final class TerminalEmulator {
 
         // Then: Implement bracketed paste mode if enabled:
         boolean bracketed = isDecsetInternalBitSet(DECSET_BIT_BRACKETED_PASTE_MODE);
-        if (bracketed) mSession.write("\033[200~");
-        mSession.write(text);
-        if (bracketed) mSession.write("\033[201~");
+        // Submit bracket markers and body as one logical write. A remote
+        // transport with a bounded queue can then accept or reject the whole
+        // paste; it must never send the prefix/suffix while dropping the body.
+        mSession.write(bracketed ? "\033[200~" + text + "\033[201~" : text);
     }
 
     /** http://www.vt100.net/docs/vt510-rm/DECSC */

@@ -4,11 +4,15 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.widget.PopupMenu
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.navigation.NavDirections
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.sshtool.R
@@ -28,6 +32,8 @@ class HostListFragment : Fragment() {
     }
     
     private lateinit var adapter: HostListAdapter
+    private var deleteDialog: AlertDialog? = null
+    private var aboutMenu: PopupMenu? = null
 
     /**
      * Guards against double-tap navigation: Android can deliver two onClick
@@ -58,18 +64,17 @@ class HostListFragment : Fragment() {
     private fun setupRecyclerView() {
         adapter = HostListAdapter(
             onItemClick = { host ->
-                if (isNavigating) return@HostListAdapter
-                isNavigating = true
                 val action = HostListFragmentDirections
                     .actionHostListToTerminal(host.id)
-                findNavController().navigate(action)
+                navigateOnce(action)
             },
             onItemLongClick = { host ->
-                if (isNavigating) return@HostListAdapter true
-                isNavigating = true
                 val action = HostListFragmentDirections
                     .actionHostListToEditor(host.id)
-                findNavController().navigate(action)
+                navigateOnce(action)
+                // Always consume the long-click, including while another
+                // navigation is already gated, so it cannot fall through into
+                // the regular item click callback.
                 true
             },
             onDeleteClick = { host ->
@@ -85,18 +90,23 @@ class HostListFragment : Fragment() {
     
     private fun setupMenu() {
         binding.btnAbout.setOnClickListener { anchor ->
+            if (isNavigating || aboutMenu != null) return@setOnClickListener
             val popup = PopupMenu(requireContext(), anchor)
+            aboutMenu = popup
             popup.menuInflater.inflate(R.menu.menu_host_list, popup.menu)
             popup.setOnMenuItemClickListener { item ->
                 when (item.itemId) {
                     R.id.action_about -> {
-                        findNavController().navigate(
+                        navigateOnce(
                             HostListFragmentDirections.actionHostListToAbout()
                         )
                         true
                     }
                     else -> false
                 }
+            }
+            popup.setOnDismissListener {
+                if (aboutMenu === popup) aboutMenu = null
             }
             popup.show()
         }
@@ -105,28 +115,63 @@ class HostListFragment : Fragment() {
     private fun setupFab() {
         binding.fabAdd.setOnClickListener {
             val action = HostListFragmentDirections.actionHostListToEditor(-1L)
-            findNavController().navigate(action)
+            navigateOnce(action)
         }
     }
     
     private fun observeHosts() {
         viewLifecycleOwner.lifecycleScope.launch {
-            viewModel.hosts.collectLatest { hosts ->
-                adapter.submitList(hosts)
-                binding.emptyView.visibility = if (hosts.isEmpty()) View.VISIBLE else View.GONE
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    viewModel.hosts.collectLatest { hosts ->
+                        adapter.submitList(hosts)
+                        binding.emptyView.visibility =
+                            if (hosts.isEmpty()) View.VISIBLE else View.GONE
+                    }
+                }
+                launch {
+                    viewModel.events.collect { event ->
+                        when (event) {
+                            is HostListEvent.DeleteFailed -> showDeleteFailure(event)
+                        }
+                    }
+                }
             }
         }
     }
 
     private fun confirmDelete(host: Host) {
-        AlertDialog.Builder(requireContext())
+        if (deleteDialog?.isShowing == true) return
+        val dialog = AlertDialog.Builder(requireContext())
             .setTitle(R.string.confirm_delete_title)
             .setMessage(getString(R.string.confirm_delete_message, host.name))
             .setNegativeButton(R.string.cancel, null)
             .setPositiveButton(R.string.delete) { _, _ ->
                 viewModel.deleteHost(host)
             }
-            .show()
+            .create()
+        deleteDialog = dialog
+        dialog.setOnDismissListener {
+            if (deleteDialog === dialog) deleteDialog = null
+        }
+        dialog.show()
+    }
+
+    private fun showDeleteFailure(event: HostListEvent.DeleteFailed) {
+        val detail = event.message?.takeIf { it.isNotBlank() }
+            ?: getString(R.string.confirm_delete_title)
+        Toast.makeText(
+            requireContext(),
+            getString(R.string.status_error, detail),
+            Toast.LENGTH_LONG
+        ).show()
+    }
+
+    private fun navigateOnce(action: NavDirections): Boolean {
+        if (isNavigating) return false
+        isNavigating = true
+        findNavController().navigate(action)
+        return true
     }
     
     override fun onResume() {
@@ -137,7 +182,12 @@ class HostListFragment : Fragment() {
     }
 
     override fun onDestroyView() {
-        super.onDestroyView()
+        deleteDialog?.dismiss()
+        deleteDialog = null
+        aboutMenu?.dismiss()
+        aboutMenu = null
+        binding.recyclerView.adapter = null
         _binding = null
+        super.onDestroyView()
     }
 }

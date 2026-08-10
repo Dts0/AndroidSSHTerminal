@@ -3,11 +3,12 @@ package com.sshtool.ssh
 import com.jcraft.jsch.HostKey
 import com.jcraft.jsch.HostKeyRepository
 import java.util.Base64
+import java.util.concurrent.atomic.AtomicReference
 
 class HostKeyVerifier(
     private val host: String,
     private val port: Int,
-    private val trustStore: HostKeyTrustStore
+    private val trustStore: HostKeyStoreBackend
 ) {
     fun verify(serverHostKey: HostKey): VerificationResult {
         return verify(serverHostKey.type, serverHostKey.key)
@@ -62,42 +63,60 @@ internal fun detectHostKeyAlgorithm(key: ByteArray): String? {
 /**
  * Host-key repository that wires the app's TOFU trust store into JSch.
  *
- * Semantics of [check]:
- *  - If JSch's own known_hosts already accepts the key ([OK]) → OK.
- *  - If the host has a trusted pin in the app's store and the presented key
- *    matches it → OK.
- *  - If JSch reports [CHANGED] (a pinned known_hosts key differs) → we MUST
- *    propagate [CHANGED]. This makes JSch throw, surfacing a host-key-change
- *    warning to the user instead of silently connecting to a possibly
- *    tampered host. Returning OK here would be a MITM bypass.
- *  - Otherwise (first connect, no pin) → NOT_INCLUDED so JSch throws and the
- *    app can show the first-time trust prompt with the fingerprint.
+ * The app-owned pin is authoritative. JSch known_hosts is retained only as a
+ * legacy migration source: a legacy OK is copied into the app store, while a
+ * valid app pin repairs a stale/missing delegate entry before connection.
  *
  * Renamed from `TrustingHostKeyRepository`: the old name implied the repo
  * trusts everything, which is the opposite of the intended strict behavior.
  */
-class StrictHostKeyRepository(
+internal class StrictHostKeyRepository(
     private val delegate: HostKeyRepository,
     private val verifier: HostKeyVerifier,
     private val host: String,
     private val port: Int,
-    private val trustStore: HostKeyTrustStore
+    private val trustStore: HostKeyStoreBackend,
+    private val legacyRepository: LegacyHostKeyRepository =
+        DelegateLegacyHostKeyRepository(delegate)
 ) : HostKeyRepository {
+
+    private data class PendingHostKeyPersistence(
+        val repositoryHost: String,
+        val algorithm: String,
+        val encodedKey: String,
+        val rawKey: ByteArray,
+        val trustAppPin: Boolean,
+        val repairLegacyEntry: Boolean
+    )
+
+    private val pendingPersistence = AtomicReference<PendingHostKeyPersistence?>(null)
 
     /** The last rejected key (algorithm + SHA-256 fingerprint), or null if none. */
     @Volatile
     var lastRejectedKey: RejectedKey? = null
         private set
 
-    data class RejectedKey(val algorithm: String, val fingerprint: String, val encodedKey: String)
+    enum class RejectionReason {
+        FIRST_USE,
+        CHANGED
+    }
+
+    data class RejectedKey(
+        val algorithm: String,
+        val fingerprint: String,
+        val encodedKey: String,
+        val reason: RejectionReason
+    )
 
     override fun check(host: String?, key: ByteArray?): Int {
+        // This repository is reused for the remainder of one connection
+        // attempt. Never let a key examined earlier in that attempt make an
+        // unrelated authentication/channel exception look like a host-key
+        // rejection (for example, a bad password after a valid pinned key).
+        lastRejectedKey = null
+        pendingPersistence.set(null)
         if (host == null || key == null) return HostKeyRepository.NOT_INCLUDED
 
-        val delegated = delegate.check(host, key)
-        if (delegated == HostKeyRepository.OK) return HostKeyRepository.OK
-
-        // Not in known_hosts. Decide via the app's own trust store.
         val algorithm = detectHostKeyAlgorithm(key)
         if (algorithm == null) {
             // Cannot determine the algorithm — fail closed.
@@ -105,24 +124,122 @@ class StrictHostKeyRepository(
         }
         val encodedKey = java.util.Base64.getEncoder().encodeToString(key)
 
-        val firstConnect = !trustStore.hasTrustedHost(this.host, this.port)
-        // Record the rejected key so the caller can surface it to the user
-        // without relying on JSch's exception text or session.hostKey.
-        lastRejectedKey = RejectedKey(algorithm, trustStore.fingerprint(encodedKey), encodedKey)
-
-        // A previously pinned (in known_hosts) key has changed. Never silently
-        // accept — surface it so the app can warn the user.
-        if (delegated == HostKeyRepository.CHANGED) return HostKeyRepository.CHANGED
-
-        // First connect for this host (no pin at all) → let the app prompt.
-        if (firstConnect) return HostKeyRepository.NOT_INCLUDED
-
-        // A pin exists for this host but the presented key didn't match → treat
-        // as a changed/different key (CHANGED) so the user is warned.
-        return when (verifier.verify(algorithm, key)) {
-            VerificationResult.Trusted -> HostKeyRepository.OK
-            is VerificationResult.Untrusted -> HostKeyRepository.CHANGED
+        // Once an app-owned pin exists it is authoritative. In particular, an
+        // obsolete known_hosts entry must not (a) block a user-confirmed key or
+        // (b) silently re-authorize an older key via delegate.OK.
+        if (trustStore.hasTrustedHost(this.host, this.port)) {
+            return when (verifier.verify(algorithm, key)) {
+                VerificationResult.Trusted -> {
+                    // The app pin is sufficient for this handshake. Repairing
+                    // legacy known_hosts is deferred until the manager can
+                    // verify the Room row/endpoint under HostRepository's
+                    // mutation mutex; writing here could race a delete/edit and
+                    // resurrect an orphan entry after cleanup.
+                    val legacy = runCatching {
+                        legacyRepository.inspect(host, key)
+                    }.getOrNull()
+                    if (legacy == null ||
+                        legacy.delegatedResult != HostKeyRepository.OK ||
+                        !legacy.exactKeyMatches || legacy.hasConflictingExactKey) {
+                        pendingPersistence.set(
+                            PendingHostKeyPersistence(
+                                repositoryHost = host,
+                                algorithm = algorithm,
+                                encodedKey = encodedKey,
+                                rawKey = key.copyOf(),
+                                trustAppPin = false,
+                                repairLegacyEntry = true
+                            )
+                        )
+                    }
+                    HostKeyRepository.OK
+                }
+                is VerificationResult.Untrusted -> reject(
+                    algorithm,
+                    encodedKey,
+                    HostKeyRepository.CHANGED
+                )
+            }
         }
+
+        // No app pin exists. Treat JSch known_hosts only as a legacy fallback
+        // for installs that populated it before the app-owned pin store became
+        // authoritative.
+        val legacy = legacyRepository.inspect(host, key)
+        return when {
+            legacy.hasRevokedPresentedKey -> reject(
+                algorithm,
+                encodedKey,
+                HostKeyRepository.CHANGED
+            )
+            legacy.exactKeyMatches ||
+                (port == 22 && legacy.delegatedResult == HostKeyRepository.OK &&
+                    !legacy.hasExactEntries) -> {
+                // One-time migration from legacy known_hosts. Future checks use
+                // the app pin as the sole authority, preventing a stale legacy
+                // key from being accepted as an alternate key.
+                pendingPersistence.set(
+                    PendingHostKeyPersistence(
+                        repositoryHost = host,
+                        algorithm = algorithm,
+                        encodedKey = encodedKey,
+                        rawKey = key.copyOf(),
+                        trustAppPin = true,
+                        repairLegacyEntry = false
+                    )
+                )
+                HostKeyRepository.OK
+            }
+            legacy.hasExactEntries ||
+                (port == 22 && legacy.delegatedResult == HostKeyRepository.CHANGED) -> reject(
+                algorithm,
+                encodedKey,
+                HostKeyRepository.CHANGED
+            )
+            else -> reject(
+                algorithm,
+                encodedKey,
+                HostKeyRepository.NOT_INCLUDED
+            )
+        }
+    }
+
+    /**
+     * Persist a key accepted during check(), after the manager has linearized
+     * this action with edit/delete and revalidated the transport generation.
+     * No pending action is a successful no-op; write failures are propagated.
+     */
+    fun persistPendingHostKey() {
+        val pending = pendingPersistence.getAndSet(null) ?: return
+        if (pending.trustAppPin) {
+            trustStore.trust(
+                this.host,
+                this.port,
+                pending.algorithm,
+                pending.encodedKey
+            )
+        }
+        if (pending.repairLegacyEntry) {
+            legacyRepository.replace(
+                pending.repositoryHost,
+                pending.algorithm,
+                pending.rawKey
+            )
+        }
+    }
+
+    private fun reject(algorithm: String, encodedKey: String, result: Int): Int {
+        lastRejectedKey = RejectedKey(
+            algorithm = algorithm,
+            fingerprint = trustStore.fingerprint(encodedKey),
+            encodedKey = encodedKey,
+            reason = if (result == HostKeyRepository.CHANGED) {
+                RejectionReason.CHANGED
+            } else {
+                RejectionReason.FIRST_USE
+            }
+        )
+        return result
     }
 
     override fun add(hostkey: HostKey?, ui: com.jcraft.jsch.UserInfo?) {

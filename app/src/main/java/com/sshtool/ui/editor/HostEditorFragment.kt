@@ -5,14 +5,17 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
+import androidx.core.widget.doAfterTextChanged
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import com.sshtool.R
 import com.sshtool.SSHToolApp
-import com.sshtool.data.model.Host
 import com.sshtool.databinding.FragmentHostEditorBinding
 import kotlinx.coroutines.launch
 
@@ -26,7 +29,7 @@ class HostEditorFragment : Fragment() {
         HostEditorViewModelFactory(SSHToolApp.instance.hostRepository)
     }
     
-    private var existingHost: Host? = null
+    private var isPopulatingForm = false
     
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -41,74 +44,175 @@ class HostEditorFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
         
         setupToolbar()
+        setupBackPressHandler()
         setupAuthTypeToggle()
+        setupDraftTracking()
         setupSaveButton()
-        
-        // 加载现有主机数据
-        if (args.hostId != -1L) {
-            loadExistingHost()
-        }
+        observeEditorState()
+        viewModel.initialize(args.hostId)
     }
     
     private fun setupToolbar() {
-        binding.toolbar.setNavigationOnClickListener {
-            findNavController().navigateUp()
-        }
+        binding.toolbar.setNavigationOnClickListener { leaveEditor() }
         
         binding.toolbar.title = getString(if (args.hostId == -1L) R.string.add_host else R.string.edit_host)
+    }
+
+    private fun setupBackPressHandler() {
+        requireActivity().onBackPressedDispatcher.addCallback(
+            viewLifecycleOwner,
+            object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() = leaveEditor()
+            }
+        )
+    }
+
+    /** Do not cancel a cross-store mutation after the user has committed it. */
+    private fun leaveEditor() {
+        if (viewModel.uiState.value.isSaving) return
+        findNavController().navigateUp()
     }
     
     private fun setupAuthTypeToggle() {
         binding.toggleAuthType.addOnButtonCheckedListener { _, checkedId, isChecked ->
             if (isChecked) {
+                if (!isPopulatingForm) {
+                    viewModel.updateAuthType(checkedId == R.id.btn_key)
+                }
                 when (checkedId) {
                     R.id.btn_password -> {
                         binding.layoutPassword.visibility = View.VISIBLE
-                        binding.layoutPrivateKey.visibility = View.GONE
+                        binding.layoutKeyAuth.visibility = View.GONE
                     }
                     R.id.btn_key -> {
                         binding.layoutPassword.visibility = View.GONE
-                        binding.layoutPrivateKey.visibility = View.VISIBLE
+                        binding.layoutKeyAuth.visibility = View.VISIBLE
                     }
                 }
             }
+        }
+    }
+
+    private fun setupDraftTracking() {
+        binding.etName.doAfterTextChanged {
+            if (!isPopulatingForm) viewModel.updateName(it?.toString().orEmpty())
+        }
+        binding.etHost.doAfterTextChanged {
+            if (!isPopulatingForm) viewModel.updateHost(it?.toString().orEmpty())
+        }
+        binding.etPort.doAfterTextChanged {
+            if (!isPopulatingForm) viewModel.updatePort(it?.toString().orEmpty())
+        }
+        binding.etUsername.doAfterTextChanged {
+            if (!isPopulatingForm) viewModel.updateUsername(it?.toString().orEmpty())
+        }
+        binding.etPassword.doAfterTextChanged {
+            if (!isPopulatingForm) viewModel.updatePassword(it?.toString().orEmpty())
+        }
+        binding.etPrivateKey.doAfterTextChanged {
+            if (!isPopulatingForm) viewModel.updatePrivateKey(it?.toString().orEmpty())
+        }
+        binding.etPassphrase.doAfterTextChanged {
+            if (!isPopulatingForm) viewModel.updatePassphrase(it?.toString().orEmpty())
         }
     }
     
     private fun setupSaveButton() {
         binding.btnSave.setOnClickListener {
+            val state = viewModel.uiState.value
+            if (state.isSaving || state.saveCompleted || state.isLoading || !state.loadCompleted) {
+                return@setOnClickListener
+            }
             if (validateInput()) {
-                saveHost()
+                viewModel.submit()
             }
         }
     }
-    
-    private fun loadExistingHost() {
+
+    private fun observeEditorState() {
         viewLifecycleOwner.lifecycleScope.launch {
-            viewModel.getHost(args.hostId)?.let { host ->
-                existingHost = host
-                binding.apply {
-                    etName.setText(host.name)
-                    etHost.setText(host.host)
-                    etPort.setText(host.port.toString())
-                    etUsername.setText(host.username)
-                    
-                    if (host.useKeyAuth) {
-                        toggleAuthType.check(R.id.btn_key)
-                        etPrivateKey.setText("")
-                        etPassphrase.setText("")
-                        layoutPassword.hint = getString(R.string.password)
-                        (etPrivateKey.parent as? com.google.android.material.textfield.TextInputLayout)
-                            ?.hint = getString(R.string.private_key_optional_keep)
-                        (etPassphrase.parent as? com.google.android.material.textfield.TextInputLayout)
-                            ?.hint = getString(R.string.passphrase_optional_keep)
-                    } else {
-                        toggleAuthType.check(R.id.btn_password)
-                        etPassword.setText("")
-                        layoutPassword.hint = getString(R.string.password_optional_keep)
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    viewModel.uiState.collect(::renderEditorState)
+                }
+                launch {
+                    viewModel.events.collect { event ->
+                        when (event) {
+                            HostEditorEvent.HostNotFound -> {
+                                Toast.makeText(
+                                    requireContext(),
+                                    R.string.host_not_found,
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                findNavController().navigateUp()
+                            }
+                            is HostEditorEvent.LoadFailed -> {
+                                Toast.makeText(
+                                    requireContext(),
+                                    event.message ?: getString(R.string.error_save_failed),
+                                    Toast.LENGTH_LONG
+                                ).show()
+                                findNavController().navigateUp()
+                            }
+                            HostEditorEvent.SaveSucceeded -> {
+                                Toast.makeText(
+                                    requireContext(),
+                                    R.string.saved_successfully,
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                findNavController().navigateUp()
+                            }
+                            is HostEditorEvent.SaveFailed -> {
+                                Toast.makeText(
+                                    requireContext(),
+                                    event.message ?: getString(R.string.error_save_failed),
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
                     }
                 }
             }
+        }
+    }
+
+    private fun renderEditorState(state: HostEditorUiState) {
+        val b = _binding ?: return
+        val draft = state.draft
+        isPopulatingForm = true
+        try {
+            b.etName.setTextIfDifferent(draft.name)
+            b.etHost.setTextIfDifferent(draft.host)
+            b.etPort.setTextIfDifferent(draft.port)
+            b.etUsername.setTextIfDifferent(draft.username)
+            b.etPassword.setTextIfDifferent(draft.password)
+            b.etPrivateKey.setTextIfDifferent(draft.privateKey)
+            b.etPassphrase.setTextIfDifferent(draft.passphrase)
+            b.toggleAuthType.check(if (draft.useKeyAuth) R.id.btn_key else R.id.btn_password)
+            b.layoutPassword.visibility = if (draft.useKeyAuth) View.GONE else View.VISIBLE
+            b.layoutKeyAuth.visibility = if (draft.useKeyAuth) View.VISIBLE else View.GONE
+            b.layoutPassword.hint = getString(
+                if (state.canKeepPassword && !draft.useKeyAuth) {
+                    R.string.password_optional_keep
+                } else {
+                    R.string.password
+                }
+            )
+            if (state.canKeepPrivateKey && draft.useKeyAuth) {
+                b.layoutPrivateKey.hint = getString(R.string.private_key_optional_keep)
+                b.layoutPassphrase.hint = getString(R.string.passphrase_optional_keep)
+            }
+        } finally {
+            isPopulatingForm = false
+        }
+        b.btnSave.isEnabled = state.loadCompleted && !state.isLoading &&
+            !state.isSaving && !state.saveCompleted
+    }
+
+    private fun android.widget.EditText.setTextIfDifferent(value: String) {
+        if (text?.toString() != value) {
+            setText(value)
+            setSelection(value.length)
         }
     }
     
@@ -137,67 +241,21 @@ class HostEditorFragment : Fragment() {
         }
         
         val useKeyAuth = binding.toggleAuthType.checkedButtonId == R.id.btn_key
+        val state = viewModel.uiState.value
 
         if (useKeyAuth) {
-            if (binding.etPrivateKey.text.isNullOrBlank() && existingHost?.useKeyAuth != true) {
+            if (binding.etPrivateKey.text.isNullOrBlank() && !state.canKeepPrivateKey) {
                 binding.etPrivateKey.error = getString(R.string.private_key_required)
                 isValid = false
             }
         } else {
-            if (binding.etPassword.text.isNullOrBlank() && existingHost?.useKeyAuth != false) {
+            if (binding.etPassword.text.isNullOrBlank() && !state.canKeepPassword) {
                 binding.etPassword.error = getString(R.string.password_required)
                 isValid = false
             }
         }
         
         return isValid
-    }
-    
-    private fun saveHost() {
-        val useKeyAuth = binding.toggleAuthType.checkedButtonId == R.id.btn_key
-        val host = Host(
-            id = existingHost?.id ?: 0,
-            name = binding.etName.text.toString().trim(),
-            host = binding.etHost.text.toString().trim(),
-            port = binding.etPort.text.toString().toIntOrNull() ?: 22,
-            username = binding.etUsername.text.toString().trim(),
-            useKeyAuth = useKeyAuth,
-            lastConnected = existingHost?.lastConnected,
-            createdAt = existingHost?.createdAt ?: System.currentTimeMillis()
-        ).apply {
-            password = if (!useKeyAuth) {
-                binding.etPassword.text?.toString()?.takeIf { it.isNotBlank() }
-                    ?: existingHost?.takeIf { !it.useKeyAuth }?.password
-            } else {
-                null
-            }
-            privateKey = if (useKeyAuth) {
-                binding.etPrivateKey.text?.toString()?.takeIf { it.isNotBlank() }
-                    ?: existingHost?.takeIf { it.useKeyAuth }?.privateKey
-            } else {
-                null
-            }
-            passphrase = if (useKeyAuth) {
-                binding.etPassphrase.text?.toString()?.takeIf { it.isNotBlank() }
-                    ?: existingHost?.takeIf { it.useKeyAuth }?.passphrase
-            } else {
-                null
-            }
-        }
-        
-        viewLifecycleOwner.lifecycleScope.launch {
-            try {
-                if (existingHost != null) {
-                    viewModel.updateHost(host)
-                } else {
-                    viewModel.saveHost(host)
-                }
-                Toast.makeText(requireContext(), R.string.saved_successfully, Toast.LENGTH_SHORT).show()
-                findNavController().navigateUp()
-            } catch (e: Exception) {
-                Toast.makeText(requireContext(), e.message ?: getString(R.string.error_save_failed), Toast.LENGTH_LONG).show()
-            }
-        }
     }
     
     override fun onDestroyView() {

@@ -1,5 +1,7 @@
 package com.sshtool.ssh
 
+import com.jcraft.jsch.HostKeyRepository
+import com.jcraft.jsch.JSch
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -7,6 +9,8 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.util.Base64
+import java.util.Locale
 
 class HostKeyTrustStoreTest {
 
@@ -24,6 +28,24 @@ class HostKeyTrustStoreTest {
         val fp1 = store.fingerprint(key)
         val fp2 = store.fingerprint(key)
         assertEquals(fp1, fp2)
+    }
+
+    @Test
+    fun trustIdentifiers_areStableAcrossLocales() {
+        val originalLocale = Locale.getDefault()
+        try {
+            val store = newStore()
+            val key = "c3NoLWVkMjU1MTk="
+            Locale.setDefault(Locale.US)
+            val usFingerprint = store.fingerprint(key)
+            store.trust("locale.example.com", 2222, "ssh-ed25519", key)
+
+            Locale.setDefault(Locale("ar", "EG"))
+            assertEquals(usFingerprint, store.fingerprint(key))
+            assertTrue(store.isTrusted("locale.example.com", 2222, "ssh-ed25519", key))
+        } finally {
+            Locale.setDefault(originalLocale)
+        }
     }
 
     @Test
@@ -166,5 +188,91 @@ class HostKeyTrustStoreTest {
         val onDisk = file.readText()
         assertFalse("legacy host not migrated: $onDisk", onDisk.contains("legacy.example.com"))
         assertTrue(onDisk.contains("h:"))
+    }
+
+    @Test
+    fun removeHost_nonDefaultPortLeavesDefaultPortKnownHostUntouched() {
+        val directory = tempFolder.newFolder("remove-exact-legacy")
+        val trustedFile = File(directory, "trusted_host_keys.tsv")
+        val knownHostsFile = File(directory, "known_hosts")
+        val defaultKey = keyBlob("ssh-ed25519", 1)
+        val alternateKey = keyBlob("ssh-ed25519", 2)
+        knownHostsFile.writeText(
+            knownHostLine("example.com", defaultKey) +
+                knownHostLine("[example.com]:2222", alternateKey)
+        )
+        val store = HostKeyTrustStore(trustedFile, knownHostsFile)
+
+        store.removeHost("example.com", 2222)
+
+        val jsch = JSch().also { it.setKnownHosts(knownHostsFile.absolutePath) }
+        assertEquals(
+            HostKeyRepository.OK,
+            jsch.hostKeyRepository.check("example.com", defaultKey)
+        )
+        assertFalse(knownHostsFile.readText().contains("[example.com]:2222"))
+        // JSch falls a bracketed endpoint back to the bare host after the exact
+        // entry is removed, so the surviving port-22 key yields CHANGED rather
+        // than NOT_INCLUDED for a different key. It must never yield OK.
+        assertEquals(
+            HostKeyRepository.CHANGED,
+            jsch.hostKeyRepository.check("[example.com]:2222", alternateKey)
+        )
+    }
+
+    @Test
+    fun snapshotAndRestore_restoresOnlyEndpointAndPreservesConcurrentHosts() {
+        val directory = tempFolder.newFolder("snapshot-both-stores")
+        val trustedFile = File(directory, "trusted_host_keys.tsv")
+        val knownHostsFile = File(directory, "known_hosts")
+        val host = "snapshot.example.com"
+        val oldKey = keyBlob("ssh-ed25519", 3)
+        val newKey = keyBlob("ssh-ed25519", 4)
+        knownHostsFile.writeText(knownHostLine(host, oldKey))
+        val store = HostKeyTrustStore(trustedFile, knownHostsFile)
+        store.trust(host, 22, "ssh-ed25519", Base64.getEncoder().encodeToString(oldKey))
+        val snapshot = store.snapshotHost(host, 22)
+
+        store.trust(host, 22, "ssh-ed25519", Base64.getEncoder().encodeToString(newKey))
+        knownHostsFile.writeText(knownHostLine("wrong.example.com", newKey))
+        store.restoreHost(host, 22, snapshot)
+
+        assertTrue(
+            store.isTrusted(
+                host,
+                22,
+                "ssh-ed25519",
+                Base64.getEncoder().encodeToString(oldKey)
+            )
+        )
+        assertFalse(
+            store.isTrusted(
+                host,
+                22,
+                "ssh-ed25519",
+                Base64.getEncoder().encodeToString(newKey)
+            )
+        )
+        val reloaded = JSch().also { it.setKnownHosts(knownHostsFile.absolutePath) }
+            .hostKeyRepository
+        assertEquals(HostKeyRepository.OK, reloaded.check(host, oldKey))
+        // Restoring host A must merge with current disk state rather than
+        // replacing the whole file and losing host B.
+        assertEquals(HostKeyRepository.OK, reloaded.check("wrong.example.com", newKey))
+    }
+
+    private fun knownHostLine(host: String, key: ByteArray): String =
+        "$host ssh-ed25519 ${Base64.getEncoder().encodeToString(key)}\n"
+
+    private fun keyBlob(algorithm: String, payload: Int): ByteArray {
+        val name = algorithm.toByteArray(Charsets.UTF_8)
+        return ByteArray(4 + name.size + 1).also { blob ->
+            blob[0] = ((name.size ushr 24) and 0xFF).toByte()
+            blob[1] = ((name.size ushr 16) and 0xFF).toByte()
+            blob[2] = ((name.size ushr 8) and 0xFF).toByte()
+            blob[3] = (name.size and 0xFF).toByte()
+            System.arraycopy(name, 0, blob, 4, name.size)
+            blob[blob.lastIndex] = payload.toByte()
+        }
     }
 }

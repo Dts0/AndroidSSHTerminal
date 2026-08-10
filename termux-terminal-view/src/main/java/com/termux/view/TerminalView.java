@@ -53,6 +53,8 @@ public final class TerminalView extends View {
     public TerminalSession mTermSession;
     /** Our terminal emulator whose session is {@link #mTermSession}. */
     public TerminalEmulator mEmulator;
+    /** Invalidates IME callbacks created for a previously attached session. */
+    private long mInputConnectionGeneration;
 
     public TerminalRenderer mRenderer;
 
@@ -290,6 +292,7 @@ public final class TerminalView extends View {
         if (session == mTermSession) return false;
         mTopRow = 0;
 
+        mInputConnectionGeneration++;
         mTermSession = session;
         mEmulator = null;
         mCombiningAccent = 0;
@@ -337,11 +340,35 @@ public final class TerminalView extends View {
         // keyboard on Android TV (see https://github.com/termux/termux-app/issues/221).
         outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN;
 
+        final long inputConnectionGeneration = mInputConnectionGeneration;
+        final TerminalSession inputConnectionSession = mTermSession;
         return new BaseInputConnection(this, true) {
+
+            /**
+             * Android may deliver a late composing callback after the app has
+             * switched terminal tabs and restarted input. Never let that old
+             * InputConnection dynamically target the newly attached session.
+             */
+            boolean rejectStaleInput() {
+                if (inputConnectionGeneration == mInputConnectionGeneration &&
+                    inputConnectionSession == mTermSession) {
+                    return false;
+                }
+                Editable editable = getEditable();
+                if (editable != null) editable.clear();
+                return true;
+            }
+
+            @Override
+            public boolean setComposingText(CharSequence text, int newCursorPosition) {
+                if (rejectStaleInput()) return true;
+                return super.setComposingText(text, newCursorPosition);
+            }
 
             @Override
             public boolean finishComposingText() {
                 if (TERMINAL_VIEW_KEY_LOGGING_ENABLED) mClient.logInfo(LOG_TAG, "IME: finishComposingText()");
+                if (rejectStaleInput()) return true;
                 super.finishComposingText();
 
                 sendTextToTerminal(getEditable());
@@ -354,6 +381,7 @@ public final class TerminalView extends View {
                 if (TERMINAL_VIEW_KEY_LOGGING_ENABLED) {
                     mClient.logInfo(LOG_TAG, "IME: commitText(\"" + text + "\", " + newCursorPosition + ")");
                 }
+                if (rejectStaleInput()) return true;
                 super.commitText(text, newCursorPosition);
 
                 if (mEmulator == null) return true;
@@ -369,10 +397,17 @@ public final class TerminalView extends View {
                 if (TERMINAL_VIEW_KEY_LOGGING_ENABLED) {
                     mClient.logInfo(LOG_TAG, "IME: deleteSurroundingText(" + leftLength + ", " + rightLength + ")");
                 }
+                if (rejectStaleInput()) return true;
                 // The stock Samsung keyboard with 'Auto check spelling' enabled sends leftLength > 1.
                 KeyEvent deleteKey = new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL);
                 for (int i = 0; i < leftLength; i++) sendKeyEvent(deleteKey);
                 return super.deleteSurroundingText(leftLength, rightLength);
+            }
+
+            @Override
+            public boolean sendKeyEvent(KeyEvent event) {
+                if (rejectStaleInput()) return true;
+                return super.sendKeyEvent(event);
             }
 
             void sendTextToTerminal(CharSequence text) {
