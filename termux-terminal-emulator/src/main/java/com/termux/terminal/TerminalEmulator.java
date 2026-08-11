@@ -187,6 +187,8 @@ public final class TerminalEmulator {
 
     /** Holds OSC and device control arguments, which can be strings. */
     private final StringBuilder mOSCOrDeviceControlArgs = new StringBuilder();
+    /** Number of code points consumed by the current ignored APC payload. */
+    private int mApcDataLength;
 
     /**
      * True if the current escape sequence should continue, false if the current escape sequence should be terminated.
@@ -1047,7 +1049,12 @@ public final class TerminalEmulator {
      * When in {@link #ESC_APC} (APC, Application Program Command) sequence.
      */
     private void doApc(int b) {
-        if (b == 27) {
+        if (b == 24 || b == 26) { // CAN or SUB cancels a control string.
+            finishSequence();
+        } else if (!consumeApcCodePoint()) {
+            // A truncated remote program must not leave the outer shell's
+            // output hidden forever. Recover after a bounded payload.
+        } else if (b == 27) {
             continueSequence(ESC_APC_ESCAPE);
         }
         // Eat APC sequences silently for now.
@@ -1060,11 +1067,24 @@ public final class TerminalEmulator {
         if (b == '\\') {
             // A String Terminator (ST), ending the APC escape sequence.
             finishSequence();
+        } else if (b == 24 || b == 26) { // CAN or SUB.
+            finishSequence();
+        } else if (!consumeApcCodePoint()) {
+            // Too long; return to normal terminal parsing.
+        } else if (b == 27) {
+            // Preserve a possible terminator after repeated ESC bytes.
+            continueSequence(ESC_APC_ESCAPE);
         } else {
             // The Escape character was not the start of a String Terminator (ST),
             // but instead just data inside of the APC escape sequence.
             continueSequence(ESC_APC);
         }
+    }
+
+    private boolean consumeApcCodePoint() {
+        if (++mApcDataLength <= MAX_OSC_STRING_LENGTH) return true;
+        finishSequence();
+        return false;
     }
 
     private int nextTabStop(int numTabs) {
@@ -1495,6 +1515,7 @@ public final class TerminalEmulator {
                 setDecsetinternalBit(DECSET_BIT_APPLICATION_KEYPAD, false);
                 break;
             case '_': // APC - Application Program Command.
+                mApcDataLength = 0;
                 continueSequence(ESC_APC);
                 break;
             default:

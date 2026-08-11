@@ -18,6 +18,7 @@ import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.withStarted
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import com.google.android.material.tabs.TabLayout
@@ -25,9 +26,11 @@ import com.sshtool.R
 import com.sshtool.SSHToolApp
 import com.sshtool.databinding.FragmentTerminalBinding
 import com.sshtool.ssh.SSHConnectionState
+import com.termux.terminal.KeyHandler
 import com.termux.terminal.TerminalSession
 import com.termux.view.TerminalViewClient
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -46,16 +49,36 @@ class TerminalFragment : Fragment() {
     private var isLeavingScreen = false
     private var ctrlArmed = false
     private var terminalFontSize = 14f
+    private var entryHostRequestConsumed = false
     private var renderingTabs = false
     private var renderedTabKeys: List<Pair<String, String>> = emptyList()
     private var attachedSessionId: String? = null
+    private var lastRenderedActiveSessionId: String? = null
+    private var lastRenderedConnectionState: SSHConnectionState? = null
+    private var screenRefreshPending = false
     private val observedBridges = mutableMapOf<String, SshTerminalSession>()
     private var hostKeyDialog: AlertDialog? = null
     private var hostKeyDialogKey: String? = null
     private var hostPickerDialog: AlertDialog? = null
     private var hostPickerLoading = false
+    private var hostPickerJob: Job? = null
     private var lastErrorToastKey: String? = null
     private var focusRunnable: Runnable? = null
+    private var entryHostJob: Job? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        entryHostRequestConsumed = savedInstanceState?.getBoolean(
+            STATE_ENTRY_HOST_REQUEST_CONSUMED
+        ) ?: false
+        terminalFontSize = savedInstanceState?.getFloat(STATE_TERMINAL_FONT_SIZE, 14f) ?: 14f
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean(STATE_ENTRY_HOST_REQUEST_CONSUMED, entryHostRequestConsumed)
+        outState.putFloat(STATE_TERMINAL_FONT_SIZE, terminalFontSize)
+        super.onSaveInstanceState(outState)
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -78,28 +101,49 @@ class TerminalFragment : Fragment() {
         setupImeResizeListener()
         observeSessions()
 
-        viewLifecycleOwner.lifecycleScope.launch {
+        entryHostJob = viewLifecycleOwner.lifecycleScope.launch {
             val target = try {
+                val current = viewModel.uiState.value
                 when {
-                    args.hostId != -1L -> viewModel.ensureSessionForHost(args.hostId)
-                    viewModel.uiState.value.sessions.isNotEmpty() -> {
-                        viewModel.uiState.value.activeSessionId
-                            ?: viewModel.uiState.value.sessions.first().sessionId.also(viewModel::selectSession)
+                    // Retry an entry request that was cancelled by recreation,
+                    // but do not re-select its original host after it has
+                    // completed and the user has moved to another tab. An empty
+                    // activity ViewModel means process recreation and also
+                    // requires rebuilding the entry session from the nav arg.
+                    args.hostId != -1L &&
+                        (!entryHostRequestConsumed || current.sessions.isEmpty()) -> {
+                        viewModel.ensureSessionForHost(args.hostId).also { sessionId ->
+                            if (sessionId != null) entryHostRequestConsumed = true
+                        }
+                    }
+                    current.sessions.isNotEmpty() -> {
+                        current.activeSessionId
+                            ?: current.sessions.first().sessionId.also(viewModel::selectSession)
                     }
                     else -> null
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                showHostLoadFailure(e)
-                if (viewModel.uiState.value.sessions.isEmpty() && _binding != null) {
-                    findNavController().navigateUp()
+                viewLifecycleOwner.lifecycle.withStarted {
+                    showHostLoadFailure(e)
+                    if (viewModel.uiState.value.sessions.isEmpty() && _binding != null) {
+                        leaveScreen()
+                    }
                 }
                 return@launch
             }
-            if (target == null && viewModel.uiState.value.sessions.isEmpty() && _binding != null) {
-                Toast.makeText(requireContext(), R.string.host_not_found, Toast.LENGTH_SHORT).show()
-                findNavController().navigateUp()
+            if (target == null) {
+                viewLifecycleOwner.lifecycle.withStarted {
+                    if (viewModel.uiState.value.sessions.isEmpty() && _binding != null) {
+                        Toast.makeText(
+                            requireContext(),
+                            R.string.host_not_found,
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        leaveScreen()
+                    }
+                }
             }
         }
     }
@@ -111,6 +155,7 @@ class TerminalFragment : Fragment() {
 
     private fun setupTerminalView() {
         binding.terminalView.setTextSize(terminalFontSize.toInt())
+        binding.terminalView.setScaleFactor(terminalFontSize / 14f)
         binding.terminalView.setTerminalViewClient(object : TerminalViewClient {
             override fun onScale(scale: Float): Float {
                 val b = _binding ?: return terminalFontSize / 14f
@@ -162,7 +207,7 @@ class TerminalFragment : Fragment() {
 
             override fun onEmulatorSet() = Unit
             override fun onTerminalSizeChanged(columns: Int, rows: Int) {
-                viewModel.uiState.value.activeSessionId?.let {
+                attachedSessionId?.let {
                     viewModel.resize(it, columns, rows)
                 }
             }
@@ -190,14 +235,14 @@ class TerminalFragment : Fragment() {
         binding.btnTab.setOnClickListener { sendRaw("\t") }
         binding.btnEsc.setOnClickListener { sendRaw("\u001B") }
         binding.btnPaste.setOnClickListener { pasteClipboard() }
-        binding.btnUp.setOnClickListener { sendRaw("\u001B[A") }
-        binding.btnDown.setOnClickListener { sendRaw("\u001B[B") }
-        binding.btnRight.setOnClickListener { sendRaw("\u001B[C") }
-        binding.btnLeft.setOnClickListener { sendRaw("\u001B[D") }
-        binding.btnPgup.setOnClickListener { sendRaw("\u001B[5~") }
-        binding.btnPgdn.setOnClickListener { sendRaw("\u001B[6~") }
-        binding.btnHome.setOnClickListener { sendRaw("\u001B[H") }
-        binding.btnEnd.setOnClickListener { sendRaw("\u001B[F") }
+        binding.btnUp.setOnClickListener { sendTerminalKey(KeyEvent.KEYCODE_DPAD_UP) }
+        binding.btnDown.setOnClickListener { sendTerminalKey(KeyEvent.KEYCODE_DPAD_DOWN) }
+        binding.btnRight.setOnClickListener { sendTerminalKey(KeyEvent.KEYCODE_DPAD_RIGHT) }
+        binding.btnLeft.setOnClickListener { sendTerminalKey(KeyEvent.KEYCODE_DPAD_LEFT) }
+        binding.btnPgup.setOnClickListener { sendTerminalKey(KeyEvent.KEYCODE_PAGE_UP) }
+        binding.btnPgdn.setOnClickListener { sendTerminalKey(KeyEvent.KEYCODE_PAGE_DOWN) }
+        binding.btnHome.setOnClickListener { sendTerminalKey(KeyEvent.KEYCODE_MOVE_HOME) }
+        binding.btnEnd.setOnClickListener { sendTerminalKey(KeyEvent.KEYCODE_MOVE_END) }
     }
 
     private fun setupConnectionButtons() {
@@ -227,6 +272,13 @@ class TerminalFragment : Fragment() {
                     reselectActiveTab()
                     showHostPickerDialog()
                 } else {
+                    // Attach synchronously before publishing the new active id.
+                    // Otherwise a physical-key or late IME callback delivered
+                    // before the StateFlow collector runs can target the old
+                    // TerminalSession while the UI already shows the new tab.
+                    viewModel.uiState.value.sessions
+                        .firstOrNull { it.sessionId == tag }
+                        ?.let(::attachTerminalSession)
                     viewModel.selectSession(tag)
                 }
             }
@@ -240,7 +292,23 @@ class TerminalFragment : Fragment() {
     private fun observeSessions() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.uiState.collectLatest(::render)
+                try {
+                    launch {
+                        viewModel.events.collect { event ->
+                            when (event) {
+                                is TerminalUiEvent.SendRejected -> Toast.makeText(
+                                    requireContext(),
+                                    getString(R.string.send_rejected, event.hostName),
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
+                    }
+                    viewModel.uiState.collectLatest(::render)
+                } finally {
+                    unbindScreenObservers()
+                    screenRefreshPending = true
+                }
             }
         }
     }
@@ -252,7 +320,10 @@ class TerminalFragment : Fragment() {
 
         val active = state.sessions.firstOrNull { it.sessionId == state.activeSessionId }
         if (active == null) {
+            if (attachedSessionId != null) b.terminalView.invalidateInputConnection()
             attachedSessionId = null
+            lastRenderedActiveSessionId = null
+            lastRenderedConnectionState = null
             setTerminalInputEnabled(false)
             b.toolbar.title = getString(R.string.app_name)
             b.tvStatus.text = getString(R.string.status_disconnected)
@@ -260,21 +331,43 @@ class TerminalFragment : Fragment() {
         }
 
         selectTab(active.sessionId)
-        if (attachedSessionId != active.sessionId) {
-            val changed = b.terminalView.attachSession(active.terminalSession)
-            attachedSessionId = active.sessionId
-            if (changed) {
-                // attachSession invalidates the old IME generation. Ask Android
-                // for a fresh InputConnection immediately; any late callback
-                // from the old one is rejected by TerminalView.
-                val imm = context?.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-                imm?.restartInput(b.terminalView)
-            }
-            b.terminalView.onScreenUpdated()
-        }
+        attachTerminalSession(active)
         b.toolbar.title = active.host.name
         updateTabIndicators(state.sessions)
-        applyConnectionState(active)
+        val shouldActivateConnected =
+            lastRenderedActiveSessionId != active.sessionId ||
+                (active.connectionState is SSHConnectionState.Connected &&
+                    lastRenderedConnectionState !is SSHConnectionState.Connected)
+        applyConnectionState(active, shouldActivateConnected)
+        lastRenderedActiveSessionId = active.sessionId
+        lastRenderedConnectionState = active.connectionState
+    }
+
+    private fun attachTerminalSession(session: TerminalTabState) {
+        val b = _binding ?: return
+        if (attachedSessionId == session.sessionId) {
+            // Screen callbacks are intentionally unbound while STOPPED. Draw
+            // the latest emulator contents when collection resumes.
+            if (screenRefreshPending) {
+                screenRefreshPending = false
+                b.terminalView.onScreenUpdated()
+            }
+            return
+        }
+
+        val previousSessionId = attachedSessionId
+        if (previousSessionId != null) clearCtrlArmed()
+        attachedSessionId = session.sessionId
+        screenRefreshPending = false
+        val changed = b.terminalView.attachSession(session.terminalSession)
+        if (changed) {
+            // attachSession invalidates the old IME generation. Ask Android
+            // for a fresh InputConnection immediately; any late callback
+            // from the old one is rejected by TerminalView.
+            val imm = context?.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            imm?.restartInput(b.terminalView)
+        }
+        b.terminalView.onScreenUpdated()
     }
 
     private fun bindScreenObservers(sessions: List<TerminalTabState>) {
@@ -294,6 +387,11 @@ class TerminalFragment : Fragment() {
                 }
             }
         }
+    }
+
+    private fun unbindScreenObservers() {
+        observedBridges.values.forEach { it.setScreenUpdater(null) }
+        observedBridges.clear()
     }
 
     private fun rebuildTabsIfNeeded(sessions: List<TerminalTabState>) {
@@ -356,9 +454,13 @@ class TerminalFragment : Fragment() {
         }
     }
 
-    private fun applyConnectionState(session: TerminalTabState) {
+    private fun applyConnectionState(
+        session: TerminalTabState,
+        shouldActivateConnected: Boolean
+    ) {
         val b = _binding ?: return
         val state = session.connectionState
+        if (state !is SSHConnectionState.Error) lastErrorToastKey = null
         if (state !is SSHConnectionState.HostKeyConfirmationRequired &&
             state !is SSHConnectionState.HostKeyChanged) {
             dismissHostKeyDialog()
@@ -379,8 +481,7 @@ class TerminalFragment : Fragment() {
                 b.btnDisconnect.isEnabled = true
                 b.statusIndicator.setBackgroundResource(R.drawable.status_connected)
                 setTerminalInputEnabled(true)
-                focusTerminalInput()
-                syncPtySize(session)
+                if (shouldActivateConnected) focusTerminalInput()
             }
             is SSHConnectionState.HostKeyConfirmationRequired -> {
                 setToolbarVisible(true)
@@ -425,9 +526,11 @@ class TerminalFragment : Fragment() {
     }
 
     private fun showHostPickerDialog() {
-        if (hostPickerLoading || hostPickerDialog?.isShowing == true) return
+        if (hostPickerJob?.isActive == true ||
+            hostPickerLoading ||
+            hostPickerDialog?.isShowing == true) return
         hostPickerLoading = true
-        viewLifecycleOwner.lifecycleScope.launch {
+        hostPickerJob = viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val hosts = SSHToolApp.instance.hostRepository.getAllHosts().first()
                 if (_binding == null) return@launch
@@ -439,7 +542,7 @@ class TerminalFragment : Fragment() {
                 hostPickerDialog = AlertDialog.Builder(requireContext())
                     .setTitle("选择主机")
                     .setItems(names) { _, which ->
-                        viewLifecycleOwner.lifecycleScope.launch {
+                        hostPickerJob = viewLifecycleOwner.lifecycleScope.launch {
                             try {
                                 if (viewModel.addSessionForHost(hosts[which].id) == null && _binding != null) {
                                     Toast.makeText(requireContext(), R.string.host_not_found, Toast.LENGTH_SHORT).show()
@@ -579,6 +682,16 @@ class TerminalFragment : Fragment() {
         if (ctrlArmed) clearCtrlArmed()
     }
 
+    private fun sendTerminalKey(keyCode: Int) {
+        val b = _binding ?: return
+        if (!b.terminalView.isEnabled) return
+        // Reuse Termux's key encoder so cursor/Home/End keys switch between
+        // CSI and SS3 when the active remote application toggles DECCKM.
+        val keyModifiers = if (ctrlArmed) KeyHandler.KEYMOD_CTRL else 0
+        b.terminalView.handleKeyCode(keyCode, keyModifiers)
+        if (ctrlArmed) clearCtrlArmed()
+    }
+
     private fun pasteClipboard() {
         val sessionId = viewModel.uiState.value.activeSessionId ?: return
         runCatching {
@@ -627,11 +740,6 @@ class TerminalFragment : Fragment() {
         b.terminalView.postDelayed(runnable, 100)
     }
 
-    private fun syncPtySize(session: TerminalTabState) {
-        val emulator = session.terminalSession.emulator ?: return
-        viewModel.resize(session.sessionId, emulator.mColumns, emulator.mRows)
-    }
-
     private fun setupImeResizeListener() {
         val root = binding.root
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
@@ -648,23 +756,44 @@ class TerminalFragment : Fragment() {
 
     private fun leaveScreen() {
         if (isLeavingScreen) return
+        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return
+        val navController = findNavController()
+        if (navController.currentDestination?.id != R.id.terminalFragment) return
         isLeavingScreen = true
-        findNavController().navigateUp()
+        val navigated = runCatching { navController.navigateUp() }
+            .onFailure {
+                android.util.Log.w("TerminalFragment", "Navigation was rejected", it)
+            }
+            .getOrDefault(false)
+        if (navigated) {
+            // Navigation commits asynchronously. Cancel a still-suspended Room
+            // lookup now so it cannot create a new activity-owned SSH session
+            // in the short window before this Fragment view is destroyed.
+            entryHostJob?.cancel()
+            hostPickerJob?.cancel()
+        } else {
+            isLeavingScreen = false
+        }
     }
 
     override fun onDestroyView() {
         val b = _binding
+        b?.terminalView?.invalidateInputConnection()
         clearCtrlArmed()
         focusRunnable?.let { runnable -> b?.terminalView?.removeCallbacks(runnable) }
         focusRunnable = null
-        observedBridges.values.forEach { it.setScreenUpdater(null) }
-        observedBridges.clear()
+        entryHostJob = null
+        hostPickerJob = null
+        unbindScreenObservers()
         hostPickerDialog?.dismiss()
         hostPickerDialog = null
         hostPickerLoading = false
         dismissHostKeyDialog()
         ViewCompat.setOnApplyWindowInsetsListener(binding.root, null)
         attachedSessionId = null
+        lastRenderedActiveSessionId = null
+        lastRenderedConnectionState = null
+        screenRefreshPending = false
         renderedTabKeys = emptyList()
         _binding = null
         super.onDestroyView()
@@ -672,5 +801,7 @@ class TerminalFragment : Fragment() {
 
     private companion object {
         const val ADD_TAB_TAG = "+"
+        const val STATE_ENTRY_HOST_REQUEST_CONSUMED = "entry_host_request_consumed"
+        const val STATE_TERMINAL_FONT_SIZE = "terminal_font_size"
     }
 }

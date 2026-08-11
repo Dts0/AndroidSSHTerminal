@@ -279,6 +279,9 @@ class SSHConnectionManager internal constructor(
         if (columns <= 0 || rows <= 0) return
         val connection = synchronized(lock) {
             sessions[sessionId]?.let { info ->
+                if (info.desiredPtyColumns == columns && info.desiredPtyRows == rows) {
+                    return
+                }
                 info.desiredPtyColumns = columns
                 info.desiredPtyRows = rows
                 info.connection

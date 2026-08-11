@@ -122,6 +122,39 @@ class SSHConnectionManagerTest {
     }
 
     @Test
+    fun repeatedIdenticalResizeIsForwardedOnlyOncePerTransport() = runBlocking {
+        val host = host(4, "dedupe.example")
+        val factory = FakeTransportFactory()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val manager = SSHConnectionManager(factory, scope)
+        val repository = repositoryFor(host)
+        val listener = RecordingListener()
+
+        try {
+            manager.connect("dedupe", host, repository, listener)
+            val first = factory.await(host.host)
+            first.connectStarted.await()
+
+            repeat(20) { manager.updatePtySizeForSession("dedupe", 120, 40) }
+            assertEquals(listOf(120 to 40), first.sizes)
+
+            first.releaseConnect.complete(Unit)
+            listener.awaitState { it is SSHConnectionState.Connected }
+            repeat(20) { manager.updatePtySizeForSession("dedupe", 120, 40) }
+            assertEquals(listOf(120 to 40), first.sizes)
+
+            manager.reconnect("dedupe")
+            val second = factory.await(host.host, occurrence = 1)
+            second.connectStarted.await()
+            assertEquals(listOf(120 to 40), second.sizes)
+        } finally {
+            factory.releaseAll()
+            manager.disconnectAll()
+            scope.cancel()
+        }
+    }
+
+    @Test
     fun reconnectAndDisconnectSuppressEveryOldGenerationCallback() = runBlocking {
         val factory = FakeTransportFactory()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

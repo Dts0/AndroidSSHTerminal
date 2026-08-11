@@ -30,6 +30,7 @@ class HostEditorFragment : Fragment() {
     }
     
     private var isPopulatingForm = false
+    private var isLeaving = false
     
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -42,6 +43,7 @@ class HostEditorFragment : Fragment() {
     
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        isLeaving = false
         
         setupToolbar()
         setupBackPressHandler()
@@ -69,8 +71,16 @@ class HostEditorFragment : Fragment() {
 
     /** Do not cancel a cross-store mutation after the user has committed it. */
     private fun leaveEditor() {
-        if (viewModel.uiState.value.isSaving) return
-        findNavController().navigateUp()
+        if (viewModel.uiState.value.isSaving || isLeaving) return
+        val navController = findNavController()
+        if (navController.currentDestination?.id != R.id.hostEditorFragment) return
+        isLeaving = true
+        val navigated = runCatching { navController.navigateUp() }
+            .onFailure {
+                android.util.Log.w("HostEditorFragment", "Navigation was rejected", it)
+            }
+            .getOrDefault(false)
+        if (!navigated) isLeaving = false
     }
     
     private fun setupAuthTypeToggle() {
@@ -144,7 +154,7 @@ class HostEditorFragment : Fragment() {
                                     R.string.host_not_found,
                                     Toast.LENGTH_SHORT
                                 ).show()
-                                findNavController().navigateUp()
+                                leaveEditor()
                             }
                             is HostEditorEvent.LoadFailed -> {
                                 Toast.makeText(
@@ -152,7 +162,7 @@ class HostEditorFragment : Fragment() {
                                     event.message ?: getString(R.string.error_save_failed),
                                     Toast.LENGTH_LONG
                                 ).show()
-                                findNavController().navigateUp()
+                                leaveEditor()
                             }
                             HostEditorEvent.SaveSucceeded -> {
                                 Toast.makeText(
@@ -160,7 +170,7 @@ class HostEditorFragment : Fragment() {
                                     R.string.saved_successfully,
                                     Toast.LENGTH_SHORT
                                 ).show()
-                                findNavController().navigateUp()
+                                leaveEditor()
                             }
                             is HostEditorEvent.SaveFailed -> {
                                 Toast.makeText(

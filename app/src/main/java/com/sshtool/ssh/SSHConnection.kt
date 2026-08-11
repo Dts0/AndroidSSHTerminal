@@ -60,16 +60,10 @@ internal class SSHConnection(
 ) : SSHTransport {
 
     private val resourceLock = Any()
-    private val ptyLock = Any()
-
     @Volatile private var session: Session? = null
     @Volatile private var channel: ChannelShell? = null
     @Volatile private var inputStream: InputStream? = null
     @Volatile private var outputStream: OutputStream? = null
-
-    private var desiredPtyColumns = DEFAULT_PTY_COLUMNS
-    private var desiredPtyRows = DEFAULT_PTY_ROWS
-    private var desiredPtyVersion = 0L
 
     private var readerJob: Job? = null
     private var writerJob: Job? = null
@@ -78,6 +72,22 @@ internal class SSHConnection(
     private val scope = CoroutineScope(
         Dispatchers.IO + SupervisorJob() + CoroutineExceptionHandler { _, throwable ->
             Log.e(LOG_TAG, "Unhandled SSH coroutine exception", throwable)
+        }
+    )
+    private val ptyResizer = ConflatedPtyResizeDispatcher(
+        scope = scope,
+        initialColumns = DEFAULT_PTY_COLUMNS,
+        initialRows = DEFAULT_PTY_ROWS,
+        targetProvider = { channel },
+        isTargetConnected = { it.isConnected },
+        sendResize = { target, columns, rows ->
+            // Send exactly one observable window-change. Calling
+            // setPtySize() here would hide failures inside JSch and make an
+            // additional manual request a protocol duplicate.
+            JSchPtyResizeCompat.resize(target, columns, rows, 0, 0)
+        },
+        onFailure = { failure ->
+            if (!closed.get()) Log.w(LOG_TAG, "setPtySize failed", failure)
         }
     )
 
@@ -177,26 +187,15 @@ internal class SSHConnection(
                 setPty(true)
                 setEnv("TERM", "xterm-256color")
                 setPtyType("xterm-256color")
-                val configuredVersion = synchronized(ptyLock) {
-                    setPtySize(desiredPtyColumns, desiredPtyRows, 0, 0)
-                    desiredPtyVersion
-                }
+                val configuredSize = ptyResizer.snapshotForInitialRequest()
+                // Before connect(), JSch only updates the dimensions included
+                // in the initial pty-req and performs no network write.
+                setPtySize(configuredSize.columns, configuredSize.rows, 0, 0)
                 connect(30_000)
-                // A resize can race the blocking channel connect. JSch 0.2.18
-                // only stores setPtySize() locally after connect, so emit its
-                // package-private window-change request when the desired size
-                // advanced during that interval.
-                synchronized(ptyLock) {
-                    if (desiredPtyVersion != configuredVersion) {
-                        JSchPtyResizeCompat.resize(
-                            this,
-                            desiredPtyColumns,
-                            desiredPtyRows,
-                            0,
-                            0
-                        )
-                    }
-                }
+                // A resize may have arrived while connect() was blocking.
+                // Wake the single conflated worker so only the latest version
+                // is sent after the initial pty-req has completed.
+                ptyResizer.markInitialRequestApplied(configuredSize)
             }
             if (closed.get()) {
                 closeTransport()
@@ -311,30 +310,8 @@ internal class SSHConnection(
     }
 
     override fun updatePtySize(columns: Int, rows: Int) {
-        if (columns <= 0 || rows <= 0 || closed.get()) return
-        synchronized(ptyLock) {
-            desiredPtyColumns = columns
-            desiredPtyRows = rows
-            desiredPtyVersion += 1
-        }
-        val targetChannel = channel ?: return
-        scope.launch {
-            try {
-                synchronized(ptyLock) {
-                    if (!closed.get() && channel === targetChannel) {
-                        JSchPtyResizeCompat.resize(
-                            targetChannel,
-                            desiredPtyColumns,
-                            desiredPtyRows,
-                            0,
-                            0
-                        )
-                    }
-                }
-            } catch (e: Exception) {
-                if (!closed.get()) Log.w(LOG_TAG, "setPtySize failed", e)
-            }
-        }
+        if (closed.get()) return
+        ptyResizer.update(columns, rows)
     }
 
     /** Idempotent teardown. Call from an IO context for explicit disconnects. */
@@ -343,6 +320,7 @@ internal class SSHConnection(
     private fun disconnectInternal(notifyState: Boolean) {
         if (!closed.compareAndSet(false, true)) return
         outbound.close()
+        ptyResizer.close()
         readerJob?.cancel()
         writerJob?.cancel()
         closeTransport()

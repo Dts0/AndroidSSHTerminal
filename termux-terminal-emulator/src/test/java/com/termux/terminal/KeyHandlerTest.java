@@ -123,6 +123,11 @@ public class KeyHandlerTest extends TestCase {
 		assertKeysEquals("\033[B", KeyHandler.getCode(KeyEvent.KEYCODE_DPAD_DOWN, 0, false, false));
 		assertKeysEquals("\033[C", KeyHandler.getCode(KeyEvent.KEYCODE_DPAD_RIGHT, 0, false, false));
 		assertKeysEquals("\033[D", KeyHandler.getCode(KeyEvent.KEYCODE_DPAD_LEFT, 0, false, false));
+		// .. application cursor mode (DECCKM), used by vim/less/ncurses:
+		assertKeysEquals("\033OA", KeyHandler.getCode(KeyEvent.KEYCODE_DPAD_UP, 0, true, false));
+		assertKeysEquals("\033OB", KeyHandler.getCode(KeyEvent.KEYCODE_DPAD_DOWN, 0, true, false));
+		assertKeysEquals("\033OC", KeyHandler.getCode(KeyEvent.KEYCODE_DPAD_RIGHT, 0, true, false));
+		assertKeysEquals("\033OD", KeyHandler.getCode(KeyEvent.KEYCODE_DPAD_LEFT, 0, true, false));
 		// .. shifted:
 		assertKeysEquals("\033[1;2A", KeyHandler.getCode(KeyEvent.KEYCODE_DPAD_UP, KeyHandler.KEYMOD_SHIFT, false, false));
 		assertKeysEquals("\033[1;2B", KeyHandler.getCode(KeyEvent.KEYCODE_DPAD_DOWN, KeyHandler.KEYMOD_SHIFT, false, false));
@@ -143,6 +148,8 @@ public class KeyHandlerTest extends TestCase {
 		// Home/end keys:
 		assertKeysEquals("\033[H", KeyHandler.getCode(KeyEvent.KEYCODE_MOVE_HOME, 0, false, false));
 		assertKeysEquals("\033[F", KeyHandler.getCode(KeyEvent.KEYCODE_MOVE_END, 0, false, false));
+		assertKeysEquals("\033OH", KeyHandler.getCode(KeyEvent.KEYCODE_MOVE_HOME, 0, true, false));
+		assertKeysEquals("\033OF", KeyHandler.getCode(KeyEvent.KEYCODE_MOVE_END, 0, true, false));
 		// ... shifted:
 		assertKeysEquals("\033[1;2H", KeyHandler.getCode(KeyEvent.KEYCODE_MOVE_HOME, KeyHandler.KEYMOD_SHIFT, false, false));
 		assertKeysEquals("\033[1;2F", KeyHandler.getCode(KeyEvent.KEYCODE_MOVE_END, KeyHandler.KEYMOD_SHIFT, false, false));

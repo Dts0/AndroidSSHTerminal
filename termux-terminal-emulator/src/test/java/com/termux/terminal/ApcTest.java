@@ -18,4 +18,31 @@ public class ApcTest extends TerminalTestCase {
             .assertLinesAre("hello  world", "            ");
     }
 
+    public void testCancelledApcRestoresOuterShellOutput() {
+        withTerminalSized(12, 2)
+            .enterString("\033_hidden\030after-can")
+            .assertLinesAre("after-can   ", "            ");
+
+        withTerminalSized(12, 2)
+            .enterString("\033_hidden\032after-sub")
+            .assertLinesAre("after-sub   ", "            ");
+    }
+
+    public void testOversizedUnterminatedApcRestoresOuterShellOutput() {
+        withTerminalSized(12, 2).enterString("\033_");
+
+        StringBuilder oversizedPayload = new StringBuilder();
+        for (int i = 0; i < 8193; i++) oversizedPayload.append('x');
+        enterString(oversizedPayload.toString());
+
+        enterString("recovered")
+            .assertLinesAre("recovered   ", "            ");
+    }
+
+    public void testRepeatedEscapeCanStillTerminateApc() {
+        withTerminalSized(12, 2)
+            .enterString("\033_payload\033\033\\visible")
+            .assertLinesAre("visible     ", "            ");
+    }
+
 }

@@ -169,9 +169,20 @@ class HostListFragment : Fragment() {
 
     private fun navigateOnce(action: NavDirections): Boolean {
         if (isNavigating) return false
+        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return false
+        val navController = findNavController()
+        if (navController.currentDestination?.id != R.id.hostListFragment) return false
         isNavigating = true
-        findNavController().navigate(action)
-        return true
+        return runCatching {
+            navController.navigate(action)
+            true
+        }.onFailure {
+            // A lifecycle transition can save FragmentManager state between a
+            // click and navigate(). Do not crash or permanently disable every
+            // action on this screen when that race occurs.
+            isNavigating = false
+            android.util.Log.w("HostListFragment", "Navigation was rejected", it)
+        }.getOrDefault(false)
     }
     
     override fun onResume() {

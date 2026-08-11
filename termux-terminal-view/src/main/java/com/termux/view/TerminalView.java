@@ -82,6 +82,8 @@ public final class TerminalView extends View {
     private long mMouseStartDownTime = -1;
 
     final Scroller mScroller;
+    private Runnable mFlingRunnable;
+    private MotionEvent mFlingEvent;
 
     /** What was left in from scrolling movement. */
     float mScrollRemainder;
@@ -201,7 +203,10 @@ public final class TerminalView extends View {
                 if (mEmulator == null) return true;
                 // Do not start scrolling until last fling has been taken care of:
                 if (!mScroller.isFinished()) return true;
+                cancelFling();
 
+                final long flingGeneration = mInputConnectionGeneration;
+                final TerminalSession flingSession = mTermSession;
                 final boolean mouseTrackingAtStartOfFling = mEmulator.isMouseTrackingActive();
                 float SCALE = 0.25f;
                 if (mouseTrackingAtStartOfFling) {
@@ -210,24 +215,32 @@ public final class TerminalView extends View {
                     mScroller.fling(0, mTopRow, 0, -(int) (velocityY * SCALE), 0, 0, -mEmulator.getScreen().getActiveTranscriptRows(), 0);
                 }
 
-                post(new Runnable() {
+                mFlingEvent = MotionEvent.obtain(e2);
+                mFlingRunnable = new Runnable() {
                     private int mLastY = 0;
 
                     @Override
                     public void run() {
-                        if (mouseTrackingAtStartOfFling != mEmulator.isMouseTrackingActive()) {
-                            mScroller.abortAnimation();
+                        if (this != mFlingRunnable || flingGeneration != mInputConnectionGeneration ||
+                            flingSession != mTermSession || mEmulator == null ||
+                            mouseTrackingAtStartOfFling != mEmulator.isMouseTrackingActive()) {
+                            finishFling(this);
                             return;
                         }
-                        if (mScroller.isFinished()) return;
+                        if (mScroller.isFinished()) {
+                            finishFling(this);
+                            return;
+                        }
                         boolean more = mScroller.computeScrollOffset();
                         int newY = mScroller.getCurrY();
                         int diff = mouseTrackingAtStartOfFling ? (newY - mLastY) : (newY - mTopRow);
-                        doScroll(e2, diff);
+                        doScroll(mFlingEvent, diff);
                         mLastY = newY;
                         if (more) post(this);
+                        else finishFling(this);
                     }
-                });
+                };
+                post(mFlingRunnable);
 
                 return true;
             }
@@ -235,7 +248,7 @@ public final class TerminalView extends View {
             @Override
             public boolean onDown(float x, float y) {
                 mScrollRemainder = 0.0f;
-                if (!mScroller.isFinished()) mScroller.abortAnimation();
+                cancelFling();
                 ViewParent parent = getParent();
                 if (parent != null) parent.requestDisallowInterceptTouchEvent(true);
                 return true;
@@ -290,12 +303,12 @@ public final class TerminalView extends View {
      */
     public boolean attachSession(TerminalSession session) {
         if (session == mTermSession) return false;
+        stopTextSelectionModeImmediately();
         mTopRow = 0;
 
-        mInputConnectionGeneration++;
+        invalidateInputConnection();
         mTermSession = session;
         mEmulator = null;
-        mCombiningAccent = 0;
 
         updateSize();
 
@@ -303,6 +316,32 @@ public final class TerminalView extends View {
         setVerticalScrollBarEnabled(true);
 
         return true;
+    }
+
+    /**
+     * Reject every InputConnection previously created for this view. Android
+     * keyboards may deliver composing callbacks after a Fragment view has
+     * already been destroyed; those callbacks must never reach an
+     * activity-owned terminal session that is intentionally still alive.
+     */
+    public void invalidateInputConnection() {
+        mInputConnectionGeneration++;
+        mCombiningAccent = 0;
+        cancelFling();
+    }
+
+    private void finishFling(Runnable fling) {
+        if (mFlingRunnable == fling) cancelFling();
+    }
+
+    private void cancelFling() {
+        if (!mScroller.isFinished()) mScroller.abortAnimation();
+        if (mFlingRunnable != null) removeCallbacks(mFlingRunnable);
+        mFlingRunnable = null;
+        if (mFlingEvent != null) {
+            mFlingEvent.recycle();
+            mFlingEvent = null;
+        }
     }
 
     @Override
@@ -548,6 +587,13 @@ public final class TerminalView extends View {
     public void setTextSize(int textSize) {
         mRenderer = new TerminalRenderer(textSize, mRenderer == null ? Typeface.MONOSPACE : mRenderer.mTypeface);
         updateSize();
+    }
+
+    /** Keep pinch-zoom's absolute scale in sync when a host restores text size. */
+    public void setScaleFactor(float scaleFactor) {
+        if (scaleFactor > 0 && !Float.isInfinite(scaleFactor) && !Float.isNaN(scaleFactor)) {
+            mScaleFactor = scaleFactor;
+        }
     }
 
     public void setTypeface(Typeface newTypeface) {
@@ -954,9 +1000,9 @@ public final class TerminalView extends View {
 
     /** Input the specified keyCode if applicable and return if the input was consumed. */
     public boolean handleKeyCode(int keyCode, int keyMod) {
+        if (mTermSession == null || mEmulator == null) return false;
         // Ensure cursor is shown when a key is pressed down like long hold on (arrow) keys
-        if (mEmulator != null)
-            mEmulator.setCursorBlinkState(true);
+        mEmulator.setCursorBlinkState(true);
 
         if (handleKeyCodeAction(keyCode, keyMod))
             return true;
@@ -1469,6 +1515,13 @@ public final class TerminalView extends View {
         }
     }
 
+    private void stopTextSelectionModeImmediately() {
+        if (mTextSelectionCursorController != null && mTextSelectionCursorController.hideImmediately()) {
+            mClient.copyModeChanged(false);
+            invalidate();
+        }
+    }
+
     private void decrementYTextSelectionCursors(int decrement) {
         if (mTextSelectionCursorController != null) {
             mTextSelectionCursorController.decrementYTextSelectionCursors(decrement);
@@ -1486,12 +1539,13 @@ public final class TerminalView extends View {
 
     @Override
     protected void onDetachedFromWindow() {
+        invalidateInputConnection();
         super.onDetachedFromWindow();
 
         if (mTextSelectionCursorController != null) {
             // Might solve the following exception
             // android.view.WindowLeaked: Activity com.termux.app.TermuxActivity has leaked window android.widget.PopupWindow
-            stopTextSelectionMode();
+            stopTextSelectionModeImmediately();
 
             getViewTreeObserver().removeOnTouchModeChangeListener(mTextSelectionCursorController);
             mTextSelectionCursorController.onDetached();

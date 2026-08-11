@@ -55,12 +55,21 @@ public class TextSelectionCursorController implements CursorController {
 
     @Override
     public boolean hide() {
+        return hide(false);
+    }
+
+    /** Hide without the short user-interaction debounce used by normal taps. */
+    public boolean hideImmediately() {
+        return hide(true);
+    }
+
+    private boolean hide(boolean force) {
         if (!isActive()) return false;
 
         // prevent hide calls right after a show call, like long pressing the down key
         // 300ms seems long enough that it wouldn't cause hide problems if action button
         // is quickly clicked after the show, otherwise decrease it
-        if (System.currentTimeMillis() - mShowStartTime < 300) {
+        if (!force && System.currentTimeMillis() - mShowStartTime < 300) {
             return false;
         }
 
@@ -116,7 +125,9 @@ public class TextSelectionCursorController implements CursorController {
                 ClipboardManager clipboard = (ClipboardManager) terminalView.getContext().getSystemService(Context.CLIPBOARD_SERVICE);
                 menu.add(Menu.NONE, ACTION_COPY, Menu.NONE, R.string.copy_text).setShowAsAction(show);
                 menu.add(Menu.NONE, ACTION_PASTE, Menu.NONE, R.string.paste_text).setEnabled(clipboard != null && clipboard.hasPrimaryClip()).setShowAsAction(show);
-                menu.add(Menu.NONE, ACTION_MORE, Menu.NONE, R.string.text_selection_more);
+                // The embedding app does not register a context menu for
+                // TerminalView. Do not expose a "More" action that only ends
+                // selection and then opens no menu.
                 return true;
             }
 

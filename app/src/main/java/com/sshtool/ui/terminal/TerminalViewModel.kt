@@ -11,8 +11,12 @@ import com.sshtool.ssh.SSHConnectionState
 import com.termux.terminal.TerminalSession
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -34,6 +38,10 @@ data class TerminalUiState(
     val activeSessionId: String? = null
 )
 
+sealed interface TerminalUiEvent {
+    data class SendRejected(val sessionId: String, val hostName: String) : TerminalUiEvent
+}
+
 /** Owns SSH transports and terminal scrollback for the lifetime of MainActivity. */
 class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
 
@@ -43,7 +51,8 @@ class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
         val bridge: SshTerminalSession,
         val terminalSession: TerminalSession,
         var connectionState: SSHConnectionState = SSHConnectionState.Connecting,
-        val operationGeneration: AtomicLong = AtomicLong(0)
+        val operationGeneration: AtomicLong = AtomicLong(0),
+        var lastSendRejectionNanos: Long? = null
     )
 
     private val manager = SSHConnectionManager()
@@ -53,6 +62,12 @@ class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TerminalUiState())
     val uiState: StateFlow<TerminalUiState> = _uiState.asStateFlow()
+    private val _events = MutableSharedFlow<TerminalUiEvent>(
+        replay = 0,
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
+    val events: SharedFlow<TerminalUiEvent> = _events.asSharedFlow()
 
     /** Reuse an existing session for list navigation; otherwise create one. */
     suspend fun ensureSessionForHost(hostId: Long): String? = sessionMutex.withLock {
@@ -162,15 +177,13 @@ class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
         onMain {
             val managed = sessions[sessionId] ?: return@onMain
             if (managed.connectionState !is SSHConnectionState.Connected) return@onMain
-            managed.operationGeneration.incrementAndGet()
-            managed.connectionState = SSHConnectionState.Error(
-                "发送缓冲区已满或连接已断开"
-            )
-            publish()
-            // Incrementing the VM token above prevents manager.disconnect's
-            // old listener from replacing this actionable error with a generic
-            // Disconnected state.
-            manager.disconnect(sessionId)
+            val now = System.nanoTime()
+            val lastRejection = managed.lastSendRejectionNanos
+            if (lastRejection == null ||
+                now - lastRejection >= SEND_REJECTION_EVENT_INTERVAL_NANOS) {
+                managed.lastSendRejectionNanos = now
+                _events.tryEmit(TerminalUiEvent.SendRejected(sessionId, managed.host.name))
+            }
         }
     }
 
@@ -272,6 +285,10 @@ class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
         _uiState.value = TerminalUiState()
         manager.shutdown()
         super.onCleared()
+    }
+
+    private companion object {
+        const val SEND_REJECTION_EVENT_INTERVAL_NANOS = 2_000_000_000L
     }
 }
 

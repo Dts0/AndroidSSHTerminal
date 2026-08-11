@@ -67,6 +67,7 @@
     <string name="key_home">Home</string>
     <string name="key_end">End</string>
     <string name="key_paste">Paste</string>
+    <string name="send_rejected">%1$s：发送缓冲区已满，输入未发送；请稍后重试或缩小粘贴内容</string>
     <string name="terminal_touch_to_input">轻触下方输入区开始输入；字符将直接发送到 SSH</string>
 
     <!-- About -->
