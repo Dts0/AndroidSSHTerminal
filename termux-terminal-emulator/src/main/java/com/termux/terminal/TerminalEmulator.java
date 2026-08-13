@@ -983,7 +983,10 @@ public final class TerminalEmulator {
                                 try {
                                     c = (char) Long.decode("0x" + part.charAt(i) + "" + part.charAt(i + 1)).longValue();
                                 } catch (NumberFormatException e) {
-                                    Logger.logStackTraceWithMessage(mClient, LOG_TAG, "Invalid device termcap/terminfo encoded name \"" + part + "\"", e);
+                                    // DCS is supplied by the remote process. Do not copy its payload (or a
+                                    // NumberFormatException containing part of it) into application logs.
+                                    Logger.logError(mClient, LOG_TAG,
+                                        "Invalid encoded termcap/terminfo request (encoded length=" + part.length() + ")");
                                     continue;
                                 }
                                 transBuffer.append(c);
@@ -1011,7 +1014,8 @@ public final class TerminalEmulator {
                                     case "&8": // Undo key - ignore.
                                         break;
                                     default:
-                                        Logger.logWarn(mClient, LOG_TAG, "Unhandled termcap/terminfo name: '" + trans + "'");
+                                        Logger.logWarn(mClient, LOG_TAG,
+                                            "Unhandled termcap/terminfo request (decoded length=" + trans.length() + ")");
                                 }
                                 // Respond with invalid request:
                                 mSession.write("\033P0+r" + part + "\033\\");
@@ -1023,7 +1027,8 @@ public final class TerminalEmulator {
                                 mSession.write("\033P1+r" + part + "=" + hexEncoded + "\033\\");
                             }
                         } else {
-                            Logger.logError(mClient, LOG_TAG, "Invalid device termcap/terminfo name of odd length: " + part);
+                            Logger.logError(mClient, LOG_TAG,
+                                "Invalid encoded termcap/terminfo request (odd encoded length=" + part.length() + ")");
                         }
                     }
                 } else {
@@ -2133,11 +2138,15 @@ public final class TerminalEmulator {
                 break;
             case 52: // Manipulate Selection Data. Skip the optional first selection parameter(s).
                 int startIndex = textParameter.indexOf(";") + 1;
+                String encodedClipboardText = textParameter.substring(startIndex);
                 try {
-                    String clipboardText = new String(Base64.decode(textParameter.substring(startIndex), 0), StandardCharsets.UTF_8);
+                    String clipboardText = new String(Base64.decode(encodedClipboardText, 0), StandardCharsets.UTF_8);
                     mSession.onCopyTextToClipboard(clipboardText);
                 } catch (Exception e) {
-                    Logger.logError(mClient, LOG_TAG, "OSC Manipulate selection, invalid string '" + textParameter + "");
+                    // OSC 52 is supplied by the remote process and may contain clipboard secrets. Keep the
+                    // diagnostic useful without copying attacker-controlled or sensitive data into logs.
+                    Logger.logError(mClient, LOG_TAG,
+                        "OSC 52 clipboard payload rejected (encoded length=" + encodedClipboardText.length() + ")");
                 }
                 break;
             case 104:

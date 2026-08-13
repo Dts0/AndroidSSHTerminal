@@ -19,6 +19,7 @@ import com.sshtool.R
 import com.sshtool.SSHToolApp
 import com.sshtool.data.model.Host
 import com.sshtool.databinding.FragmentHostListBinding
+import com.sshtool.ui.MainActivity
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -142,12 +143,21 @@ class HostListFragment : Fragment() {
 
     private fun confirmDelete(host: Host) {
         if (deleteDialog?.isShowing == true) return
+        val terminalViewModel =
+            (activity as? MainActivity)?.existingTerminalViewModelOrNull()
+        val message = if (terminalViewModel?.hasSessionsForHost(host.id) == true) {
+            getString(R.string.confirm_delete_active_sessions_message, host.name)
+        } else {
+            getString(R.string.confirm_delete_message, host.name)
+        }
         val dialog = AlertDialog.Builder(requireContext())
             .setTitle(R.string.confirm_delete_title)
-            .setMessage(getString(R.string.confirm_delete_message, host.name))
+            .setMessage(message)
             .setNegativeButton(R.string.cancel, null)
             .setPositiveButton(R.string.delete) { _, _ ->
-                viewModel.deleteHost(host)
+                viewModel.deleteHost(host) { hostId ->
+                    terminalViewModel?.closeSessionsForHost(hostId)
+                }
             }
             .create()
         deleteDialog = dialog
@@ -181,7 +191,7 @@ class HostListFragment : Fragment() {
             // click and navigate(). Do not crash or permanently disable every
             // action on this screen when that race occurs.
             isNavigating = false
-            android.util.Log.w("HostListFragment", "Navigation was rejected", it)
+            android.util.Log.w("HostListFragment", "Navigation was rejected")
         }.getOrDefault(false)
     }
     

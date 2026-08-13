@@ -46,6 +46,21 @@
             android:name="hostId"
             app:argType="long"
             android:defaultValue="-1L" />
+
+        <action
+            android:id="@+id/action_terminal_to_fileTransfer"
+            app:destination="@id/fileTransferFragment" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/fileTransferFragment"
+        android:name="com.sshtool.ui.filetransfer.FileTransferFragment"
+        android:label="@string/file_transfer_title"
+        tools:layout="@layout/fragment_file_transfer">
+
+        <argument
+            android:name="sessionId"
+            app:argType="string" />
     </fragment>
 
     <fragment

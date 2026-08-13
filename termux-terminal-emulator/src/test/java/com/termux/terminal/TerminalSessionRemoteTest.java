@@ -4,7 +4,9 @@ import junit.framework.TestCase;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 /** Regression coverage for TerminalSession's external-byte-stream mode. */
 public class TerminalSessionRemoteTest extends TestCase {
@@ -85,6 +87,44 @@ public class TerminalSessionRemoteTest extends TestCase {
         );
     }
 
+    public void testInvalidOsc52DoesNotLeakClipboardPayloadToLogs() {
+        TestClient client = new TestClient();
+        TerminalSession session = new TerminalSession(100, client, (data, offset, count) -> {});
+        session.updateSize(10, 5, 13, 15);
+        String sensitivePayload = "not-base64-private-clipboard-token";
+
+        append(session, "\033]52;c;" + sensitivePayload + "\007");
+
+        assertEquals(1, client.errorLogs.size());
+        String diagnostic = client.errorLogs.get(0);
+        assertTrue(diagnostic.contains("OSC 52 clipboard payload rejected"));
+        assertTrue(diagnostic.contains("encoded length=" + sensitivePayload.length()));
+        assertFalse(diagnostic.contains(sensitivePayload));
+    }
+
+    public void testTermcapRequestsDoNotLeakControlPayloadToLogs() {
+        TestClient client = new TestClient();
+        TerminalSession session = new TerminalSession(100, client, (data, offset, count) -> {});
+        session.updateSize(10, 5, 13, 15);
+        String sensitiveName = "private/remote/path";
+        String encodedName = hexEncode(sensitiveName);
+        String invalidEncodedName = "GG" + encodedName;
+
+        append(session, "\033P+q" + encodedName + "\033\\");
+        append(session, "\033P+q" + invalidEncodedName + "\033\\");
+        append(session, "\033P+q" + encodedName + "F\033\\");
+
+        assertEquals(2, client.warningLogs.size());
+        assertEquals(2, client.errorLogs.size());
+        String diagnostics = client.warningLogs.toString() + client.errorLogs.toString();
+        assertTrue(diagnostics.contains("decoded length=" + sensitiveName.length()));
+        assertTrue(diagnostics.contains("encoded length=" + invalidEncodedName.length()));
+        assertTrue(diagnostics.contains("odd encoded length=" + (encodedName.length() + 1)));
+        assertFalse(diagnostics.contains(sensitiveName));
+        assertFalse(diagnostics.contains(encodedName));
+        assertFalse(diagnostics.contains(invalidEncodedName));
+    }
+
     public void testRemoteFinishIsIdempotent() {
         TestClient client = new TestClient();
         ByteArrayOutputStream output = new ByteArrayOutputStream();
@@ -137,11 +177,21 @@ public class TerminalSessionRemoteTest extends TestCase {
         );
     }
 
+    private static String hexEncode(String value) {
+        StringBuilder encoded = new StringBuilder();
+        for (int index = 0; index < value.length(); index++) {
+            encoded.append(String.format("%02X", (int) value.charAt(index)));
+        }
+        return encoded.toString();
+    }
+
     private static final class TestClient implements TerminalSessionClient {
         int textUpdates;
         int finished;
         int pidUpdates;
         int lastPid;
+        final List<String> errorLogs = new ArrayList<>();
+        final List<String> warningLogs = new ArrayList<>();
 
         @Override public void onTextChanged(TerminalSession changedSession) { textUpdates++; }
         @Override public void onTitleChanged(TerminalSession changedSession) {}
@@ -158,8 +208,8 @@ public class TerminalSessionRemoteTest extends TestCase {
         @Override public Integer getTerminalCursorStyle() {
             return TerminalEmulator.TERMINAL_CURSOR_STYLE_BLOCK;
         }
-        @Override public void logError(String tag, String message) {}
-        @Override public void logWarn(String tag, String message) {}
+        @Override public void logError(String tag, String message) { errorLogs.add(message); }
+        @Override public void logWarn(String tag, String message) { warningLogs.add(message); }
         @Override public void logInfo(String tag, String message) {}
         @Override public void logDebug(String tag, String message) {}
         @Override public void logVerbose(String tag, String message) {}

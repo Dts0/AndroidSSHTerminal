@@ -80,7 +80,7 @@ class SshTerminalSession(
         }.onFailure {
             // OSC 52 is remote-controlled input. Platform clipboard failures
             // must not be allowed to crash the emulator/main thread.
-            android.util.Log.w("SshTerminalSession", "Unable to write clipboard", it)
+            android.util.Log.w("SshTerminalSession", "Unable to write clipboard")
         }
     }
 
@@ -92,7 +92,7 @@ class SshTerminalSession(
             val text = clip.getItemAt(0).coerceToText(appContext)?.toString().orEmpty()
             if (text.isNotEmpty()) paste(text)
         }.onFailure {
-            android.util.Log.w("SshTerminalSession", "Unable to read clipboard", it)
+            android.util.Log.w("SshTerminalSession", "Unable to read clipboard")
         }
     }
 
@@ -107,7 +107,9 @@ class SshTerminalSession(
     override fun logDebug(tag: String, message: String) { android.util.Log.d(tag, message) }
     override fun logVerbose(tag: String, message: String) { android.util.Log.v(tag, message) }
     override fun logStackTraceWithMessage(tag: String, message: String, e: Exception) {
-        android.util.Log.e(tag, message, e)
+        android.util.Log.e(tag, "Terminal component error")
     }
-    override fun logStackTrace(tag: String, e: Exception) { android.util.Log.e(tag, e.toString(), e) }
+    override fun logStackTrace(tag: String, e: Exception) {
+        android.util.Log.e(tag, "Terminal component error")
+    }
 }

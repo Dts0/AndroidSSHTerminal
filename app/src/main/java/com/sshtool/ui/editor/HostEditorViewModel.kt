@@ -2,6 +2,9 @@ package com.sshtool.ui.editor
 
 import androidx.lifecycle.*
 import com.sshtool.data.model.Host
+import com.sshtool.data.model.PortForwardDirection
+import com.sshtool.data.model.PortForwardRule
+import com.sshtool.data.model.portForwardBindAddressesConflict as sharedBindAddressesConflict
 import com.sshtool.data.repository.HostRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
@@ -22,7 +25,8 @@ data class HostEditorDraft(
     // memory. They are never put in SavedStateHandle or Android view state.
     val password: String = "",
     val privateKey: String = "",
-    val passphrase: String = ""
+    val passphrase: String = "",
+    val portForwardRules: List<PortForwardRule> = emptyList()
 )
 
 data class HostEditorUiState(
@@ -33,7 +37,8 @@ data class HostEditorUiState(
     val saveCompleted: Boolean = false,
     val editingExisting: Boolean = false,
     val canKeepPassword: Boolean = false,
-    val canKeepPrivateKey: Boolean = false
+    val canKeepPrivateKey: Boolean = false,
+    val advancedSettingsExpanded: Boolean = false
 )
 
 class HostEditorViewModel(private val repository: HostRepository) : ViewModel() {
@@ -50,6 +55,7 @@ class HostEditorViewModel(private val repository: HostRepository) : ViewModel() 
 
     private val dirtyFields = mutableSetOf<DraftField>()
     private var authTypeDirty = false
+    private var portForwardRulesDirty = false
     private var requestedHostId: Long? = null
     private var existingHost: Host? = null
 
@@ -68,12 +74,13 @@ class HostEditorViewModel(private val repository: HostRepository) : ViewModel() 
         _uiState.value = _uiState.value.copy(isLoading = true)
         viewModelScope.launch {
             try {
-                val loaded = repository.getHostById(hostId)
-                if (loaded == null) {
+                val loadedProfile = repository.getEditableHostProfile(hostId)
+                if (loadedProfile == null) {
                     _uiState.value = _uiState.value.copy(isLoading = false)
                     _events.send(HostEditorEvent.HostNotFound)
                     return@launch
                 }
+                val loaded = loadedProfile.host
                 existingHost = loaded
                 val current = _uiState.value.draft
                 val merged = current.copy(
@@ -84,7 +91,10 @@ class HostEditorViewModel(private val repository: HostRepository) : ViewModel() 
                     username = loaded.username
                         .takeUnless { DraftField.USERNAME in dirtyFields } ?: current.username,
                     useKeyAuth = loaded.useKeyAuth.takeUnless { authTypeDirty }
-                        ?: current.useKeyAuth
+                        ?: current.useKeyAuth,
+                    portForwardRules = loadedProfile.portForwardRules
+                        .takeUnless { portForwardRulesDirty }
+                        ?.withCanonicalDraftOrder() ?: current.portForwardRules
                     // Existing secrets intentionally remain blank in the form;
                     // submit() keeps them from the private existingHost snapshot.
                 )
@@ -121,6 +131,92 @@ class HostEditorViewModel(private val repository: HostRepository) : ViewModel() 
         _uiState.value = state.copy(draft = state.draft.copy(useKeyAuth = useKeyAuth))
     }
 
+    fun toggleAdvancedSettings() {
+        val state = _uiState.value
+        if (state.isSaving || state.saveCompleted) return
+        _uiState.value = state.copy(
+            advancedSettingsExpanded = !state.advancedSettingsExpanded
+        )
+    }
+
+    fun addPortForwardRule(rule: PortForwardRule) {
+        val state = _uiState.value
+        if (!state.canEditPortForwardDraft()) return
+        portForwardRulesDirty = true
+        val rules = state.draft.portForwardRules + rule.copy(
+            id = 0,
+            hostId = existingHost?.id ?: 0,
+            sortOrder = state.draft.portForwardRules.size
+        )
+        _uiState.value = state.copy(draft = state.draft.copy(portForwardRules = rules))
+    }
+
+    fun updatePortForwardRule(index: Int, rule: PortForwardRule) {
+        val state = _uiState.value
+        if (!state.canEditPortForwardDraft() ||
+            index !in state.draft.portForwardRules.indices
+        ) {
+            return
+        }
+        val previous = state.draft.portForwardRules[index]
+        val replacement = rule.copy(
+            id = previous.id,
+            hostId = previous.hostId,
+            sortOrder = index
+        )
+        if (replacement == previous) return
+        portForwardRulesDirty = true
+        val rules = state.draft.portForwardRules.toMutableList().apply {
+            set(
+                index,
+                replacement
+            )
+        }.withCanonicalDraftOrder()
+        _uiState.value = state.copy(draft = state.draft.copy(portForwardRules = rules))
+    }
+
+    fun removePortForwardRule(index: Int) {
+        val state = _uiState.value
+        if (!state.canEditPortForwardDraft() ||
+            index !in state.draft.portForwardRules.indices
+        ) {
+            return
+        }
+        portForwardRulesDirty = true
+        val rules = state.draft.portForwardRules
+            .filterIndexed { ruleIndex, _ -> ruleIndex != index }
+            .mapIndexed { ruleIndex, rule -> rule.copy(sortOrder = ruleIndex) }
+        _uiState.value = state.copy(draft = state.draft.copy(portForwardRules = rules))
+    }
+
+    fun setPortForwardRuleEnabled(index: Int, enabled: Boolean) {
+        val state = _uiState.value
+        if (!state.canEditPortForwardDraft() ||
+            index !in state.draft.portForwardRules.indices
+        ) {
+            return
+        }
+        val current = state.draft.portForwardRules[index]
+        if (current.enabled == enabled) return
+        portForwardRulesDirty = true
+        val rules = state.draft.portForwardRules.toMutableList().apply {
+            set(index, current.copy(enabled = enabled))
+        }
+        _uiState.value = state.copy(draft = state.draft.copy(portForwardRules = rules))
+    }
+
+    internal fun hasDuplicatePortForward(
+        direction: PortForwardDirection,
+        bindAddress: String,
+        listenPort: Int,
+        excludingIndex: Int? = null
+    ): Boolean = _uiState.value.draft.portForwardRules.withIndex().any { (index, rule) ->
+        index != excludingIndex &&
+            rule.direction == direction &&
+            rule.listenPort == listenPort &&
+            portForwardBindAddressesConflict(direction, rule.bindAddress, bindAddress)
+    }
+
     private fun updateField(
         field: DraftField,
         transform: HostEditorDraft.() -> HostEditorDraft
@@ -140,6 +236,7 @@ class HostEditorViewModel(private val repository: HostRepository) : ViewModel() 
         if (state.isSaving || state.saveCompleted || state.isLoading || !state.loadCompleted) return
         val draft = state.draft
         val original = existingHost
+        val replacePortForwardRules = portForwardRulesDirty
         val replacementPrivateKey = draft.privateKey.takeIf(String::isNotBlank)
         val replacementPassphrase = draft.passphrase.takeIf(String::isNotBlank)
         val host = Host(
@@ -183,13 +280,34 @@ class HostEditorViewModel(private val repository: HostRepository) : ViewModel() 
         viewModelScope.launch {
             var event: HostEditorEvent? = null
             try {
-                if (original != null) {
-                    repository.updateHost(host)
+                val normalizedRules = draft.portForwardRules.mapIndexed { index, rule ->
+                    rule.copy(
+                        // Preserve an existing rule's identity across the
+                        // editor/repository hand-off. New drafts keep id=0.
+                        hostId = original?.id ?: 0,
+                        bindAddress = rule.bindAddress.trim(),
+                        targetHost = rule.targetHost.trim(),
+                        sortOrder = index
+                    )
+                }
+                val savedHostId = if (original != null) {
+                    if (replacePortForwardRules) {
+                        repository.updateHost(host, normalizedRules)
+                    } else {
+                        // Avoid deleting/reinserting unchanged child rows when
+                        // the user only edited ordinary host fields. This also
+                        // keeps their persisted rule IDs stable.
+                        repository.updateHost(host)
+                    }
+                    original.id
                 } else {
-                    repository.saveHost(host)
+                    repository.saveHost(host, normalizedRules)
                 }
                 _uiState.value = _uiState.value.copy(saveCompleted = true)
-                event = HostEditorEvent.SaveSucceeded
+                event = HostEditorEvent.SaveSucceeded(
+                    hostId = savedHostId,
+                    editingExisting = original != null
+                )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -202,10 +320,66 @@ class HostEditorViewModel(private val repository: HostRepository) : ViewModel() 
     }
 }
 
+/**
+ * JSch/Java accept bracketed IPv6 literals, while users commonly enter the
+ * same address without brackets. Treat those spellings (and DNS's optional
+ * trailing dot) as the same listening endpoint for duplicate detection.
+ */
+internal fun String.portForwardAddressComparisonKey(): String {
+    var normalized = trim().lowercase()
+    if (normalized.length >= 2 && normalized.first() == '[' && normalized.last() == ']') {
+        normalized = normalized.substring(1, normalized.lastIndex)
+    }
+    if (':' !in normalized) normalized = normalized.removeSuffix(".")
+    return normalized
+}
+
+/** Purely syntactic so editing an address never performs a DNS lookup. */
+internal fun String.isLoopbackPortForwardAddress(): Boolean {
+    val normalized = portForwardAddressComparisonKey()
+    if (normalized == "localhost" || normalized.endsWith(".localhost")) return true
+
+    fun isIpv4Loopback(value: String): Boolean {
+        val octets = value.split('.')
+        if (octets.size != 4) return false
+        val numbers = octets.map { it.toIntOrNull() ?: return false }
+        return numbers.all { it in 0..255 } && numbers.first() == 127
+    }
+
+    if (isIpv4Loopback(normalized)) return true
+    val ipv6 = normalized.substringBefore('%')
+    if (ipv6 == "::1") return true
+    if (ipv6.startsWith("::ffff:") && isIpv4Loopback(ipv6.removePrefix("::ffff:"))) {
+        return true
+    }
+    val hextets = ipv6.split(':')
+    return hextets.size == 8 && hextets.all { hextet ->
+        hextet.length in 1..4 && hextet.all { it.isDigit() || it.lowercaseChar() in 'a'..'f' }
+    } && hextets.dropLast(1).all { it.toInt(16) == 0 } && hextets.last().toInt(16) == 1
+}
+
+/** Match the distinct bind-address semantics used by JSch 0.2.18. */
+internal fun portForwardBindAddressesConflict(
+    direction: PortForwardDirection,
+    left: String,
+    right: String
+): Boolean = sharedBindAddressesConflict(direction, left, right)
+
+private fun List<PortForwardRule>.withCanonicalDraftOrder(): List<PortForwardRule> =
+    mapIndexed { index, rule ->
+        if (rule.sortOrder == index) rule else rule.copy(sortOrder = index)
+    }
+
+private fun HostEditorUiState.canEditPortForwardDraft(): Boolean =
+    loadCompleted && !isLoading && !isSaving && !saveCompleted
+
 sealed interface HostEditorEvent {
     data object HostNotFound : HostEditorEvent
     data class LoadFailed(val message: String?) : HostEditorEvent
-    data object SaveSucceeded : HostEditorEvent
+    data class SaveSucceeded(
+        val hostId: Long,
+        val editingExisting: Boolean
+    ) : HostEditorEvent
     data class SaveFailed(val message: String?) : HostEditorEvent
 }
 

@@ -23,10 +23,19 @@ class HostListViewModel(private val repository: HostRepository) : ViewModel() {
             SharingStarted.WhileSubscribed(stopTimeoutMillis = 5_000),
             emptyList()
         )
-    
-    fun deleteHost(host: Host) {
+
+    private val deletingHostIds = mutableSetOf<Long>()
+
+    fun deleteHost(
+        host: Host,
+        closeActiveSessions: suspend (hostId: Long) -> Unit
+    ) {
+        // The row remains visible while Room completes, so guard repeated taps
+        // at the ViewModel boundary rather than relying on a transient dialog.
+        if (!deletingHostIds.add(host.id)) return
         viewModelScope.launch {
             try {
+                closeActiveSessions(host.id)
                 repository.deleteHost(host)
             } catch (e: CancellationException) {
                 throw e
@@ -35,6 +44,8 @@ class HostListViewModel(private val repository: HostRepository) : ViewModel() {
                 // is temporarily STOPPED (for example during rotation) without
                 // replaying an already-consumed error on every recreation.
                 _events.send(HostListEvent.DeleteFailed(e.message))
+            } finally {
+                deletingHostIds.remove(host.id)
             }
         }
     }

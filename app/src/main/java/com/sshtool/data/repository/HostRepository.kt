@@ -3,10 +3,14 @@ package com.sshtool.data.repository
 import android.content.Context
 import androidx.room.*
 import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.sshtool.data.crypto.CredentialStore
 import com.sshtool.data.crypto.PasswordStore
 import com.sshtool.data.crypto.StoredCredentials
 import com.sshtool.data.model.Host
+import com.sshtool.data.model.PortForwardDirection
+import com.sshtool.data.model.PortForwardRule
+import com.sshtool.data.model.portForwardBindAddressesConflict
 import com.sshtool.ssh.HostKeyTrustStore
 import com.sshtool.ssh.HostTrustSnapshot
 import com.sshtool.ssh.HostTrustStore
@@ -20,7 +24,14 @@ import kotlinx.coroutines.withContext
 /** One immutable, same-revision input for an SSH transport handshake. */
 internal data class ConnectionProfile(
     val host: Host,
-    val credentials: StoredCredentials
+    val credentials: StoredCredentials,
+    val portForwardRules: List<PortForwardRule> = emptyList()
+)
+
+/** One editor snapshot containing secrets and every configured forward rule. */
+data class EditableHostProfile(
+    val host: Host,
+    val portForwardRules: List<PortForwardRule>
 )
 
 @Dao
@@ -50,9 +61,41 @@ interface HostDao {
     suspend fun countHostsAtEndpointExcluding(host: String, port: Int, excludedHostId: Long): Int
 }
 
-@Database(entities = [Host::class], version = 1, exportSchema = true)
+@Dao
+interface PortForwardRuleDao {
+    @Query(
+        "SELECT * FROM port_forward_rules WHERE hostId = :hostId " +
+            "ORDER BY sortOrder ASC, id ASC"
+    )
+    suspend fun getRulesForHost(hostId: Long): List<PortForwardRule>
+
+    @Query(
+        "SELECT * FROM port_forward_rules WHERE hostId = :hostId AND enabled = 1 " +
+            "ORDER BY sortOrder ASC, id ASC"
+    )
+    suspend fun getEnabledRulesForHost(hostId: Long): List<PortForwardRule>
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertRules(rules: List<PortForwardRule>)
+
+    @Query("DELETE FROM port_forward_rules WHERE hostId = :hostId")
+    suspend fun deleteRulesForHost(hostId: Long): Int
+}
+
+class AppDatabaseConverters {
+    @TypeConverter
+    fun portForwardDirectionToString(value: PortForwardDirection): String = value.name
+
+    @TypeConverter
+    fun stringToPortForwardDirection(value: String): PortForwardDirection =
+        PortForwardDirection.valueOf(value)
+}
+
+@Database(entities = [Host::class, PortForwardRule::class], version = 2, exportSchema = true)
+@TypeConverters(AppDatabaseConverters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun hostDao(): HostDao
+    abstract fun portForwardRuleDao(): PortForwardRuleDao
 
     companion object {
         /**
@@ -64,10 +107,43 @@ abstract class AppDatabase : RoomDatabase() {
          * `app/schemas/.../N.json`; commit those files — they are what
          * migration authoring is validated against.
          */
-        val MIGRATIONS: Array<Migration> = arrayOf(
-            // e.g. object MIGRATION_1_2 : Migration(1, 2) { override fun migrate(db: SupportSQLiteDatabase) { ... } }
-        )
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                migrateFrom1To2 { sql -> db.execSQL(sql) }
+            }
+        }
+
+        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2)
     }
+}
+
+/**
+ * Keep migration SQL observable by a pure JVM contract test without mocking
+ * the large [SupportSQLiteDatabase] interface. Production passes execSQL
+ * directly, so the test records the exact statements the migration executes.
+ */
+internal fun migrateFrom1To2(execSql: (String) -> Unit) {
+    execSql(
+        """
+        CREATE TABLE IF NOT EXISTS `port_forward_rules` (
+            `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+            `hostId` INTEGER NOT NULL,
+            `direction` TEXT NOT NULL,
+            `bindAddress` TEXT NOT NULL,
+            `listenPort` INTEGER NOT NULL,
+            `targetHost` TEXT NOT NULL,
+            `targetPort` INTEGER NOT NULL,
+            `enabled` INTEGER NOT NULL,
+            `sortOrder` INTEGER NOT NULL,
+            FOREIGN KEY(`hostId`) REFERENCES `hosts`(`id`)
+                ON UPDATE NO ACTION ON DELETE CASCADE
+        )
+        """.trimIndent()
+    )
+    execSql(
+        "CREATE INDEX IF NOT EXISTS `index_port_forward_rules_hostId` " +
+            "ON `port_forward_rules` (`hostId`)"
+    )
 }
 
 class HostRepository {
@@ -75,6 +151,7 @@ class HostRepository {
     // Keep the Room instance strongly reachable for as long as its DAO is used.
     private val database: AppDatabase?
     private val hostDao: HostDao
+    private val portForwardRuleDao: PortForwardRuleDao
     private val passwordStore: CredentialStore
     private val trustStore: HostTrustStore
     private val mutationMutex = Mutex()
@@ -88,6 +165,7 @@ class HostRepository {
             .addMigrations(*AppDatabase.MIGRATIONS)
             .build()
         hostDao = database.hostDao()
+        portForwardRuleDao = database.portForwardRuleDao()
         passwordStore = PasswordStore(context.applicationContext)
         trustStore = HostKeyTrustStore(context.applicationContext)
     }
@@ -96,10 +174,12 @@ class HostRepository {
     internal constructor(
         hostDao: HostDao,
         passwordStore: CredentialStore,
-        trustStore: HostTrustStore
+        trustStore: HostTrustStore,
+        portForwardRuleDao: PortForwardRuleDao = EmptyPortForwardRuleDao
     ) {
         database = null
         this.hostDao = hostDao
+        this.portForwardRuleDao = portForwardRuleDao
         this.passwordStore = passwordStore
         this.trustStore = trustStore
     }
@@ -111,6 +191,26 @@ class HostRepository {
             hostDao.getHostById(id)?.withSecrets()
         }
     }
+
+    /** Read the editor's host, secrets, and rules as one repository revision. */
+    suspend fun getEditableHostProfile(id: Long): EditableHostProfile? =
+        withContext(Dispatchers.IO) {
+            mutationMutex.withLock {
+                val host = hostDao.getHostById(id)?.copy()?.withSecrets()
+                    ?: return@withLock null
+                EditableHostProfile(
+                    host = host,
+                    portForwardRules = portForwardRuleDao.getRulesForHost(id).snapshot()
+                )
+            }
+        }
+
+    suspend fun getPortForwardRules(hostId: Long): List<PortForwardRule> =
+        withContext(Dispatchers.IO) {
+            mutationMutex.withLock {
+                portForwardRuleDao.getRulesForHost(hostId).snapshot()
+            }
+        }
 
     /** Read Room-backed display/connection metadata without decrypting secrets. */
     internal suspend fun getHostMetadataById(id: Long): Host? = withContext(Dispatchers.IO) {
@@ -127,7 +227,11 @@ class HostRepository {
         withContext(Dispatchers.IO) {
             mutationMutex.withLock {
                 val host = hostDao.getHostById(id)?.copy() ?: return@withLock null
-                ConnectionProfile(host, passwordStore.getCredentials(id))
+                ConnectionProfile(
+                    host = host,
+                    credentials = passwordStore.getCredentials(id),
+                    portForwardRules = portForwardRuleDao.getEnabledRulesForHost(id).snapshot()
+                )
             }
         }
 
@@ -152,43 +256,79 @@ class HostRepository {
         }
     }
 
-    suspend fun saveHost(host: Host): Long = withContext(Dispatchers.IO) {
-        mutationMutex.withLock {
-            // Once this mutation owns the repository lock, finish either the
-            // complete cross-store commit or its compensation. A Room suspend
-            // call may commit and only then resume into a cancelled coroutine;
-            // making just the catch block NonCancellable cannot detect that
-            // state and can leave metadata without matching credentials.
-            withContext(NonCancellable) {
-                // Creation must never overwrite an existing row. With REPLACE,
-                // a non-zero id could replace the old host and compensation
-                // would then delete the wrong revision.
-                require(host.id == 0L) { "新增主机不能包含已有 ID" }
-                passwordStore.requireAvailable()
-                val sanitizedHost = host.sanitizedForDatabase()
-                val hostId = hostDao.insertHost(sanitizedHost)
-                try {
-                    passwordStore.replaceCredentials(hostId, host.credentialsForStorage())
-                    hostId
-                } catch (failure: Throwable) {
-                    rollbackInto(failure) {
-                        hostDao.deleteHost(sanitizedHost.copy(id = hostId))
+    suspend fun saveHost(host: Host): Long = saveHost(host, emptyList())
+
+    suspend fun saveHost(host: Host, portForwardRules: List<PortForwardRule>): Long =
+        withContext(Dispatchers.IO) {
+            mutationMutex.withLock {
+                // Once this mutation owns the repository lock, finish either the
+                // complete cross-store commit or its compensation. A Room suspend
+                // call may commit and only then resume into a cancelled coroutine;
+                // making just the catch block NonCancellable cannot detect that
+                // state and can leave metadata without matching credentials.
+                withContext(NonCancellable) {
+                    // Creation must never overwrite an existing row. With REPLACE,
+                    // a non-zero id could replace the old host and compensation
+                    // would then delete the wrong revision.
+                    require(host.id == 0L) { "新增主机不能包含已有 ID" }
+                    validatePortForwardRules(portForwardRules)
+                    passwordStore.requireAvailable()
+                    val sanitizedHost = host.sanitizedForDatabase()
+                    var hostId: Long? = null
+                    try {
+                        withDatabaseTransaction {
+                            val insertedHostId = hostDao.insertHost(sanitizedHost)
+                            hostId = insertedHostId
+                            val normalizedRules = normalizeRules(portForwardRules, insertedHostId)
+                            if (normalizedRules.isNotEmpty()) {
+                                portForwardRuleDao.insertRules(normalizedRules)
+                            }
+                        }
+                        val insertedHostId = checkNotNull(hostId)
+                        passwordStore.replaceCredentials(
+                            insertedHostId,
+                            host.credentialsForStorage()
+                        )
+                        insertedHostId
+                    } catch (failure: Throwable) {
+                        hostId?.let { insertedHostId ->
+                            rollbackInto(failure) {
+                                withDatabaseTransaction {
+                                    portForwardRuleDao.deleteRulesForHost(insertedHostId)
+                                    hostDao.deleteHost(sanitizedHost.copy(id = insertedHostId))
+                                }
+                            }
+                            rollbackInto(failure) {
+                                passwordStore.replaceCredentials(
+                                    insertedHostId,
+                                    StoredCredentials()
+                                )
+                            }
+                        }
+                        throw failure
                     }
-                    rollbackInto(failure) {
-                        passwordStore.replaceCredentials(hostId, StoredCredentials())
-                    }
-                    throw failure
                 }
             }
         }
-    }
 
-    suspend fun updateHost(host: Host) = withContext(Dispatchers.IO) {
+    suspend fun updateHost(host: Host) = updateHostInternal(host, null)
+
+    suspend fun updateHost(host: Host, portForwardRules: List<PortForwardRule>) =
+        updateHostInternal(host, portForwardRules)
+
+    private suspend fun updateHostInternal(
+        host: Host,
+        replacementRules: List<PortForwardRule>?
+    ) = withContext(Dispatchers.IO) {
         mutationMutex.withLock {
             withContext(NonCancellable) {
+                replacementRules?.let(::validatePortForwardRules)
                 passwordStore.requireAvailable()
                 val current = hostDao.getHostById(host.id)
                     ?: throw IllegalArgumentException("主机不存在")
+                val oldRules = replacementRules?.let {
+                    portForwardRuleDao.getRulesForHost(host.id).snapshot()
+                }
                 val oldCredentials = passwordStore.getCredentials(host.id)
                 val newCredentials = host.credentialsForStorage()
                 // lastConnected can advance from a retained background terminal
@@ -208,11 +348,22 @@ class HostRepository {
                     null
                 }
 
+                var databaseMutationAttempted = false
                 var databaseUpdated = false
                 try {
                     passwordStore.replaceCredentials(host.id, newCredentials)
-                    if (hostDao.updateHost(sanitizedUpdate) != 1) {
-                        throw IllegalStateException("主机更新失败")
+                    databaseMutationAttempted = true
+                    withDatabaseTransaction {
+                        if (hostDao.updateHost(sanitizedUpdate) != 1) {
+                            throw IllegalStateException("主机更新失败")
+                        }
+                        if (replacementRules != null) {
+                            portForwardRuleDao.deleteRulesForHost(host.id)
+                            val normalizedRules = normalizeRules(replacementRules, host.id)
+                            if (normalizedRules.isNotEmpty()) {
+                                portForwardRuleDao.insertRules(normalizedRules)
+                            }
+                        }
                     }
                     databaseUpdated = true
                     if (shouldRemoveOldPin) {
@@ -224,10 +375,21 @@ class HostRepository {
                             trustStore.restoreHost(current.host, current.port, oldTrust)
                         }
                     }
-                    if (databaseUpdated) {
+                    // A real Room transaction rolls back on failure. Injected
+                    // DAOs have no transaction boundary, so compensate even
+                    // when the compound update failed part-way through.
+                    if (databaseUpdated || (database == null && databaseMutationAttempted)) {
                         rollbackInto(failure) {
-                            if (hostDao.updateHost(current.sanitizedForDatabase()) != 1) {
-                                throw IllegalStateException("无法回滚主机更新")
+                            withDatabaseTransaction {
+                                if (hostDao.updateHost(current.sanitizedForDatabase()) != 1) {
+                                    throw IllegalStateException("无法回滚主机更新")
+                                }
+                                if (oldRules != null) {
+                                    portForwardRuleDao.deleteRulesForHost(host.id)
+                                    if (oldRules.isNotEmpty()) {
+                                        portForwardRuleDao.insertRules(oldRules)
+                                    }
+                                }
                             }
                         }
                     }
@@ -247,6 +409,7 @@ class HostRepository {
                 // Always resolve the current row: the list item passed by the UI
                 // may be stale after an edit.
                 val current = hostDao.getHostById(host.id) ?: return@mutation
+                val oldRules = portForwardRuleDao.getRulesForHost(current.id).snapshot()
                 val oldCredentials = passwordStore.getCredentials(current.id)
                 val shouldRemovePin =
                     hostDao.countHostsAtEndpointExcluding(current.host, current.port, current.id) == 0
@@ -256,18 +419,31 @@ class HostRepository {
                     null
                 }
 
+                var databaseMutationAttempted = false
                 try {
                     passwordStore.replaceCredentials(current.id, StoredCredentials())
                     if (shouldRemovePin) {
                         trustStore.removeHost(current.host, current.port)
                     }
-                    if (hostDao.deleteHost(current.sanitizedForDatabase()) != 1) {
-                        throw IllegalStateException("主机删除失败")
+                    databaseMutationAttempted = true
+                    withDatabaseTransaction {
+                        portForwardRuleDao.deleteRulesForHost(current.id)
+                        if (hostDao.deleteHost(current.sanitizedForDatabase()) != 1) {
+                            throw IllegalStateException("主机删除失败")
+                        }
                     }
                 } catch (failure: Throwable) {
                     if (oldTrust != null) {
                         rollbackInto(failure) {
                             trustStore.restoreHost(current.host, current.port, oldTrust)
+                        }
+                    }
+                    if (database == null && databaseMutationAttempted) {
+                        rollbackInto(failure) {
+                            portForwardRuleDao.deleteRulesForHost(current.id)
+                            if (oldRules.isNotEmpty()) {
+                                portForwardRuleDao.insertRules(oldRules)
+                            }
                         }
                     }
                     rollbackInto(failure) {
@@ -306,6 +482,43 @@ class HostRepository {
         StoredCredentials(password = password)
     }
 
+    private suspend fun <T> withDatabaseTransaction(block: suspend () -> T): T =
+        database?.withTransaction { block() } ?: block()
+
+    private fun validatePortForwardRules(rules: List<PortForwardRule>) {
+        rules.forEach { rule ->
+            require(rule.bindAddress.isNotBlank()) { "监听地址不能为空" }
+            require(rule.targetHost.isNotBlank()) { "目标地址不能为空" }
+            require(rule.listenPort in 1..65535) { "监听端口必须在 1 到 65535 之间" }
+            require(rule.targetPort in 1..65535) { "目标端口必须在 1 到 65535 之间" }
+        }
+        rules.forEachIndexed { index, rule ->
+            val conflictingRule = rules.subList(0, index).any { previous ->
+                previous.direction == rule.direction &&
+                    previous.listenPort == rule.listenPort &&
+                    portForwardBindAddressesConflict(
+                        rule.direction,
+                        previous.bindAddress,
+                        rule.bindAddress
+                    )
+            }
+            require(!conflictingRule) { "存在重复的端口映射监听端点" }
+        }
+    }
+
+    private fun normalizeRules(
+        rules: List<PortForwardRule>,
+        hostId: Long
+    ): List<PortForwardRule> = rules.mapIndexed { index, rule ->
+        rule.copy(
+            id = 0,
+            hostId = hostId,
+            bindAddress = rule.bindAddress.trim(),
+            targetHost = rule.targetHost.trim(),
+            sortOrder = index
+        )
+    }
+
     private suspend fun rollbackInto(failure: Throwable, action: suspend () -> Unit) {
         try {
             action()
@@ -313,6 +526,18 @@ class HostRepository {
             failure.addSuppressed(rollbackFailure)
         }
     }
+}
+
+private fun List<PortForwardRule>.snapshot(): List<PortForwardRule> = map { it.copy() }
+
+private object EmptyPortForwardRuleDao : PortForwardRuleDao {
+    override suspend fun getRulesForHost(hostId: Long): List<PortForwardRule> = emptyList()
+
+    override suspend fun getEnabledRulesForHost(hostId: Long): List<PortForwardRule> = emptyList()
+
+    override suspend fun insertRules(rules: List<PortForwardRule>) = Unit
+
+    override suspend fun deleteRulesForHost(hostId: Long): Int = 0
 }
 
 /**

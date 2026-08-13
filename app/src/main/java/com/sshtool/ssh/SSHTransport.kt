@@ -1,7 +1,9 @@
 package com.sshtool.ssh
 
 import com.sshtool.data.repository.ConnectionProfile
+import com.sshtool.data.model.PortForwardRule
 import kotlinx.coroutines.channels.Channel
+import java.io.InputStream
 import java.io.OutputStream
 import java.util.ArrayDeque
 import java.util.concurrent.atomic.AtomicBoolean
@@ -20,6 +22,43 @@ internal interface SSHTransport {
     fun persistPendingHostKey()
     fun send(data: ByteArray, offset: Int = 0, count: Int = data.size - offset): Boolean
     fun updatePtySize(columns: Int, rows: Int)
+
+    /** Starts each rule independently. Implementations must not fail the shell for one bad rule. */
+    suspend fun startPortForwards(
+        rules: List<PortForwardRule>,
+        onStateChanged: (PortForwardRuntimeState) -> Unit
+    ) {
+        rules.forEach { rule ->
+            onStateChanged(
+                PortForwardRuntimeState(
+                    rule = rule,
+                    status = PortForwardStatus.FAILED,
+                    error = "当前 SSH transport 不支持端口映射"
+                )
+            )
+        }
+    }
+
+    suspend fun listRemoteDirectory(path: String): RemoteDirectoryListing =
+        throw UnsupportedOperationException("当前 SSH transport 不支持 SFTP")
+
+    suspend fun uploadFile(
+        input: InputStream,
+        remoteDirectory: String,
+        fileName: String,
+        overwriteExisting: Boolean,
+        totalBytes: Long?,
+        onProgress: (Long) -> Unit
+    ): Unit = throw UnsupportedOperationException("当前 SSH transport 不支持 SFTP")
+
+    suspend fun downloadFile(
+        remotePath: String,
+        output: OutputStream,
+        totalBytes: Long?,
+        onProgress: (Long) -> Unit
+    ): Unit = throw UnsupportedOperationException("当前 SSH transport 不支持 SFTP")
+
+    fun cancelFileTransfer() = Unit
     fun destroy()
 }
 

@@ -3,20 +3,27 @@ package com.sshtool.ssh
 import com.sshtool.data.crypto.CredentialStore
 import com.sshtool.data.crypto.StoredCredentials
 import com.sshtool.data.model.Host
+import com.sshtool.data.model.PortForwardDirection
+import com.sshtool.data.model.PortForwardRule
 import com.sshtool.data.repository.ConnectionProfile
 import com.sshtool.data.repository.HostDao
 import com.sshtool.data.repository.HostRepository
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -25,8 +32,250 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.io.ByteArrayInputStream
 
 class SSHConnectionManagerTest {
+
+    @Test
+    fun connectedGenerationStartsEachConfiguredForwardAndPublishesIsolatedStates() = runBlocking {
+        val host = host(70, "forward.example")
+        val rules = listOf(
+            forwardRule(1, host.id, 18080),
+            forwardRule(2, host.id, 18081)
+        )
+        val repository = HostRepository(
+            FakeHostDao(mutableMapOf(host.id to host)),
+            FakeCredentialStore(mapOf(host.id to StoredCredentials(password = "secret"))),
+            EmptyTrustStore,
+            FixedPortForwardRuleDao(rules)
+        )
+        val factory = FakeTransportFactory()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val manager = SSHConnectionManager(factory, scope)
+        val listener = RecordingListener()
+
+        try {
+            manager.connect("forwarded", host, repository, listener)
+            val transport = factory.await(host.host)
+            transport.failedForwardIds += 2L
+            transport.releaseConnect.complete(Unit)
+            listener.awaitState { it is SSHConnectionState.Connected }
+            withTimeout(5_000) {
+                while (manager.portForwardStates.value["forwarded"]
+                        ?.all { it.status == PortForwardStatus.ACTIVE ||
+                            it.status == PortForwardStatus.FAILED } != true) yield()
+            }
+
+            assertEquals(listOf(1L, 2L), transport.startedForwardIds)
+            val states = checkNotNull(manager.portForwardStates.value["forwarded"])
+            assertEquals(PortForwardStatus.ACTIVE, states.single { it.rule.id == 1L }.status)
+            assertEquals(PortForwardStatus.FAILED, states.single { it.rule.id == 2L }.status)
+            assertTrue(transport.isConnected)
+        } finally {
+            manager.disconnectAll()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun sftpOperationsRouteBySessionAndTransferFailureDoesNotDisconnectShell() = runBlocking {
+        val host = host(71, "sftp.example")
+        val factory = FakeTransportFactory()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val manager = SSHConnectionManager(factory, scope)
+        val listener = RecordingListener()
+
+        try {
+            manager.connect("sftp", host, repositoryFor(host), listener)
+            val transport = factory.await(host.host)
+            transport.releaseConnect.complete(Unit)
+            listener.awaitState { it is SSHConnectionState.Connected }
+
+            val listing = manager.listRemoteDirectory("sftp", ".")
+            assertEquals("/home/user", listing.path)
+            assertEquals("hello.txt", listing.entries.single().name)
+
+            transport.transferFailure = IllegalStateException("permission denied")
+            val failure = runCatching {
+                manager.uploadFile(
+                    "sftp",
+                    ByteArrayInputStream("body".toByteArray()),
+                    "/home/user",
+                    "hello.txt",
+                    overwriteExisting = true,
+                    totalBytes = 4
+                )
+            }.exceptionOrNull()
+            assertTrue(failure is IllegalStateException)
+            assertTrue(manager.fileTransferStates.value["sftp"] is FileTransferState.Failed)
+            assertTrue(transport.isConnected)
+            assertTrue(manager.send("sftp", "shell-still-works"))
+        } finally {
+            manager.disconnectAll()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun reconnectWaitsForCancelledTransferCleanupBeforeStartingNewGeneration() = runBlocking {
+        val host = host(72, "commit.example")
+        val factory = FakeTransportFactory()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val manager = SSHConnectionManager(factory, scope)
+        val listener = RecordingListener()
+
+        try {
+            manager.connect("commit", host, repositoryFor(host), listener)
+            val first = factory.await(host.host)
+            first.releaseConnect.complete(Unit)
+            listener.awaitState { it is SSHConnectionState.Connected }
+
+            first.blockUpload = true
+            val transferCompleted = CompletableDeferred<Unit>()
+            scope.launch {
+                try {
+                    manager.uploadFile(
+                        "commit",
+                        ByteArrayInputStream("body".toByteArray()),
+                        "/home/user",
+                        "hello.txt",
+                        overwriteExisting = true,
+                        totalBytes = 4
+                    )
+                } catch (_: CancellationException) {
+                    // Expected: manager retires the logical generation while
+                    // the transport finishes its protected commit window.
+                } finally {
+                    transferCompleted.complete(Unit)
+                }
+            }
+            first.uploadStarted.await()
+
+            manager.reconnect("commit")
+            first.cancelTransferCalled.await()
+            yield()
+            assertEquals(1, factory.count(host.host))
+            assertFalse(first.destroyed)
+
+            first.releaseUpload.complete(Unit)
+            transferCompleted.await()
+            val second = factory.await(host.host, occurrence = 1)
+            second.connectStarted.await()
+
+            assertTrue(first.destroyed)
+        } finally {
+            factory.createdTransports().forEach { it.releaseUpload.complete(Unit) }
+            factory.releaseAll()
+            manager.disconnectAll()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun removeSessionAndAwaitJoinsTransferBeforeDestroyingTransport() = runBlocking {
+        val host = host(73, "delete-transfer.example")
+        val factory = FakeTransportFactory()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val manager = SSHConnectionManager(factory, scope)
+        val listener = RecordingListener()
+
+        try {
+            manager.connect("delete-transfer", host, repositoryFor(host), listener)
+            val transport = factory.await(host.host)
+            transport.releaseConnect.complete(Unit)
+            listener.awaitState { it is SSHConnectionState.Connected }
+
+            transport.blockUpload = true
+            val transferCompleted = CompletableDeferred<Unit>()
+            scope.launch {
+                try {
+                    manager.uploadFile(
+                        "delete-transfer",
+                        ByteArrayInputStream("body".toByteArray()),
+                        "/home/user",
+                        "hello.txt",
+                        overwriteExisting = true,
+                        totalBytes = 4
+                    )
+                } catch (_: CancellationException) {
+                    // Expected for session removal.
+                } finally {
+                    transferCompleted.complete(Unit)
+                }
+            }
+            transport.uploadStarted.await()
+
+            val removal = async { manager.removeSessionAndAwait("delete-transfer") }
+            transport.cancelTransferCalled.await()
+            yield()
+            assertFalse(removal.isCompleted)
+            assertFalse(transport.destroyed)
+
+            transport.releaseUpload.complete(Unit)
+            transferCompleted.await()
+            removal.await()
+            assertTrue(transport.destroyed)
+        } finally {
+            factory.createdTransports().forEach { it.releaseUpload.complete(Unit) }
+            factory.releaseAll()
+            manager.disconnectAll()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun consecutiveReconnectsSerializeCleanupAndStartOnlyLatestGeneration() = runBlocking {
+        val host = host(74, "rapid-reconnect.example")
+        val factory = FakeTransportFactory()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val manager = SSHConnectionManager(factory, scope)
+        val listener = RecordingListener()
+
+        try {
+            manager.connect("rapid", host, repositoryFor(host), listener)
+            val first = factory.await(host.host)
+            first.releaseConnect.complete(Unit)
+            listener.awaitState { it is SSHConnectionState.Connected }
+
+            first.blockUpload = true
+            val transferCompleted = CompletableDeferred<Unit>()
+            scope.launch {
+                try {
+                    manager.uploadFile(
+                        "rapid",
+                        ByteArrayInputStream("body".toByteArray()),
+                        "/home/user",
+                        "hello.txt",
+                        overwriteExisting = true,
+                        totalBytes = 4
+                    )
+                } catch (_: CancellationException) {
+                    // Expected while retiring the first generation.
+                } finally {
+                    transferCompleted.complete(Unit)
+                }
+            }
+            first.uploadStarted.await()
+
+            manager.reconnect("rapid")
+            manager.reconnect("rapid")
+            first.cancelTransferCalled.await()
+            yield()
+            assertEquals(1, factory.count(host.host))
+
+            first.releaseUpload.complete(Unit)
+            transferCompleted.await()
+            val latest = factory.await(host.host, occurrence = 1)
+            latest.connectStarted.await()
+            assertEquals(2, factory.count(host.host))
+            assertTrue(first.destroyed)
+        } finally {
+            factory.createdTransports().forEach { it.releaseUpload.complete(Unit) }
+            factory.releaseAll()
+            manager.disconnectAll()
+            scope.cancel()
+        }
+    }
 
     @Test
     fun slowSessionsRouteSendAndResizeOnlyByExplicitSessionId() = runBlocking {
@@ -540,6 +789,16 @@ class SSHConnectionManagerTest {
         username = "user"
     )
 
+    private fun forwardRule(id: Long, hostId: Long, port: Int) = PortForwardRule(
+        id = id,
+        hostId = hostId,
+        direction = PortForwardDirection.LOCAL,
+        listenPort = port,
+        targetHost = "127.0.0.1",
+        targetPort = 80,
+        sortOrder = id.toInt()
+    )
+
     private fun utf8(bytes: ByteArray): String = bytes.toString(Charsets.UTF_8)
 
     private class FakeTransportFactory(
@@ -577,6 +836,8 @@ class SSHConnectionManagerTest {
         fun releaseAll() {
             created.forEach { it.releaseConnect.complete(Unit) }
         }
+
+        fun createdTransports(): List<FakeTransport> = created.toList()
     }
 
     private class FakeTransport(
@@ -595,6 +856,13 @@ class SSHConnectionManagerTest {
         val trustCalls = AtomicInteger()
         val persistCalls = AtomicInteger()
         val persistCompleted = CompletableDeferred<Unit>()
+        val startedForwardIds = CopyOnWriteArrayList<Long>()
+        val failedForwardIds = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
+        @Volatile var transferFailure: Exception? = null
+        @Volatile var blockUpload = false
+        val uploadStarted = CompletableDeferred<Unit>()
+        val releaseUpload = CompletableDeferred<Unit>()
+        val cancelTransferCalled = CompletableDeferred<Unit>()
         @Volatile var destroyed = false
 
         override suspend fun connect() {
@@ -631,9 +899,65 @@ class SSHConnectionManagerTest {
             if (!destroyed) sizes += columns to rows
         }
 
+        override suspend fun startPortForwards(
+            rules: List<PortForwardRule>,
+            onStateChanged: (PortForwardRuntimeState) -> Unit
+        ) {
+            rules.forEach { rule ->
+                startedForwardIds += rule.id
+                onStateChanged(PortForwardRuntimeState(rule, PortForwardStatus.STARTING))
+                onStateChanged(
+                    if (rule.id in failedForwardIds) {
+                        PortForwardRuntimeState(rule, PortForwardStatus.FAILED, error = "rejected")
+                    } else {
+                        PortForwardRuntimeState(rule, PortForwardStatus.ACTIVE, rule.listenPort)
+                    }
+                )
+            }
+        }
+
+        override suspend fun listRemoteDirectory(path: String) = RemoteDirectoryListing(
+            "/home/user",
+            listOf(RemoteFileEntry("hello.txt", "/home/user/hello.txt", false, size = 4))
+        )
+
+        override suspend fun uploadFile(
+            input: java.io.InputStream,
+            remoteDirectory: String,
+            fileName: String,
+            overwriteExisting: Boolean,
+            totalBytes: Long?,
+            onProgress: (Long) -> Unit
+        ) {
+            transferFailure?.let { throw it }
+            if (blockUpload) {
+                uploadStarted.complete(Unit)
+                // Model the real SSHConnection's non-suspending remote rename
+                // transaction: coroutine cancellation is recorded, but the
+                // short commit/compensation window still runs to completion.
+                withContext(NonCancellable) { releaseUpload.await() }
+            }
+            onProgress(input.readBytes().size.toLong())
+        }
+
+        override suspend fun downloadFile(
+            remotePath: String,
+            output: java.io.OutputStream,
+            totalBytes: Long?,
+            onProgress: (Long) -> Unit
+        ) {
+            transferFailure?.let { throw it }
+            output.write("body".toByteArray())
+            onProgress(4)
+        }
+
         override fun destroy() {
             destroyed = true
             isConnected = false
+        }
+
+        override fun cancelFileTransfer() {
+            cancelTransferCalled.complete(Unit)
         }
     }
 
@@ -762,6 +1086,20 @@ class SSHConnectionManagerTest {
         override suspend fun updateLastConnected(hostId: Long, timestamp: Long) {
             hosts[hostId]?.let { hosts[hostId] = it.copy(lastConnected = timestamp) }
         }
+    }
+
+    private class FixedPortForwardRuleDao(
+        private val rules: List<PortForwardRule>
+    ) : com.sshtool.data.repository.PortForwardRuleDao {
+        override suspend fun getRulesForHost(hostId: Long): List<PortForwardRule> =
+            rules.filter { it.hostId == hostId }
+
+        override suspend fun getEnabledRulesForHost(hostId: Long): List<PortForwardRule> =
+            getRulesForHost(hostId).filter { it.enabled }
+
+        override suspend fun insertRules(rules: List<PortForwardRule>) = error("not used")
+
+        override suspend fun deleteRulesForHost(hostId: Long): Int = error("not used")
     }
 
     private object EmptyTrustStore : HostTrustStore {

@@ -14,7 +14,6 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.content.res.AppCompatResources
 import androidx.core.view.ViewCompat
 import androidx.fragment.app.Fragment
-import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -25,7 +24,10 @@ import com.google.android.material.tabs.TabLayout
 import com.sshtool.R
 import com.sshtool.SSHToolApp
 import com.sshtool.databinding.FragmentTerminalBinding
+import com.sshtool.ssh.FileTransferState
+import com.sshtool.ssh.PortForwardStatus
 import com.sshtool.ssh.SSHConnectionState
+import com.sshtool.ui.MainActivity
 import com.termux.terminal.KeyHandler
 import com.termux.terminal.TerminalSession
 import com.termux.view.TerminalViewClient
@@ -42,8 +44,8 @@ class TerminalFragment : Fragment() {
     private val binding get() = _binding!!
 
     private val args: TerminalFragmentArgs by navArgs()
-    private val viewModel: TerminalViewModel by activityViewModels {
-        TerminalViewModelFactory(SSHToolApp.instance.hostRepository)
+    private val viewModel: TerminalViewModel by lazy(LazyThreadSafetyMode.NONE) {
+        (requireActivity() as MainActivity).terminalViewModel
     }
 
     private var isLeavingScreen = false
@@ -65,6 +67,7 @@ class TerminalFragment : Fragment() {
     private var lastErrorToastKey: String? = null
     private var focusRunnable: Runnable? = null
     private var entryHostJob: Job? = null
+    private var isOpeningFileTransfer = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -218,10 +221,10 @@ class TerminalFragment : Fragment() {
             override fun logDebug(tag: String, message: String) { android.util.Log.d(tag, message) }
             override fun logVerbose(tag: String, message: String) { android.util.Log.v(tag, message) }
             override fun logStackTraceWithMessage(tag: String, message: String, e: Exception) {
-                android.util.Log.e(tag, message, e)
+                android.util.Log.e(tag, "Terminal component error")
             }
             override fun logStackTrace(tag: String, e: Exception) {
-                android.util.Log.e(tag, e.toString(), e)
+                android.util.Log.e(tag, "Terminal component error")
             }
         })
     }
@@ -246,6 +249,7 @@ class TerminalFragment : Fragment() {
     }
 
     private fun setupConnectionButtons() {
+        binding.btnFileTransfer.setOnClickListener { openFileTransfer() }
         binding.btnConnect.setOnClickListener {
             viewModel.uiState.value.activeSessionId?.let(viewModel::reconnect)
         }
@@ -327,6 +331,8 @@ class TerminalFragment : Fragment() {
             setTerminalInputEnabled(false)
             b.toolbar.title = getString(R.string.app_name)
             b.tvStatus.text = getString(R.string.status_disconnected)
+            b.btnFileTransfer.isEnabled = false
+            b.btnFileTransfer.text = getString(R.string.action_file_transfer)
             return
         }
 
@@ -460,6 +466,21 @@ class TerminalFragment : Fragment() {
     ) {
         val b = _binding ?: return
         val state = session.connectionState
+        b.btnFileTransfer.isEnabled = state is SSHConnectionState.Connected
+        b.btnFileTransfer.text = when (val transfer = session.fileTransferState) {
+            is FileTransferState.Running -> {
+                val total = transfer.totalBytes
+                if (total != null && total > 0) {
+                    val percent = ((transfer.transferredBytes.toDouble() / total) * 100)
+                        .toInt()
+                        .coerceIn(0, 100)
+                    "${getString(R.string.action_file_transfer)} $percent%"
+                } else {
+                    "${getString(R.string.action_file_transfer)}…"
+                }
+            }
+            else -> getString(R.string.action_file_transfer)
+        }
         if (state !is SSHConnectionState.Error) lastErrorToastKey = null
         if (state !is SSHConnectionState.HostKeyConfirmationRequired &&
             state !is SSHConnectionState.HostKeyChanged) {
@@ -476,7 +497,7 @@ class TerminalFragment : Fragment() {
             }
             SSHConnectionState.Connected -> {
                 setToolbarVisible(false)
-                b.tvStatus.text = getString(R.string.status_connected)
+                b.tvStatus.text = connectedStatusText(session)
                 b.btnConnect.isEnabled = false
                 b.btnDisconnect.isEnabled = true
                 b.statusIndicator.setBackgroundResource(R.drawable.status_connected)
@@ -522,6 +543,41 @@ class TerminalFragment : Fragment() {
                 b.statusIndicator.setBackgroundResource(R.drawable.status_disconnected)
                 setTerminalInputEnabled(false)
             }
+        }
+    }
+
+    private fun connectedStatusText(session: TerminalTabState): String {
+        val parts = mutableListOf(getString(R.string.status_connected))
+        if (session.portForwardStates.isNotEmpty()) {
+            val active = session.portForwardStates.count { it.status == PortForwardStatus.ACTIVE }
+            val starting = session.portForwardStates.count {
+                it.status == PortForwardStatus.PENDING || it.status == PortForwardStatus.STARTING
+            }
+            val failed = session.portForwardStates.count { it.status == PortForwardStatus.FAILED }
+            parts += "映射 $active/${session.portForwardStates.size}"
+            if (starting > 0) parts += "$starting 条启动中"
+            if (failed > 0) parts += "$failed 条失败"
+        }
+        if (session.configurationStale) parts += "配置待重连"
+        return parts.joinToString(" · ")
+    }
+
+    private fun openFileTransfer() {
+        if (isOpeningFileTransfer) return
+        val active = viewModel.uiState.value.sessions.firstOrNull {
+            it.sessionId == viewModel.uiState.value.activeSessionId
+        } ?: return
+        if (active.connectionState !is SSHConnectionState.Connected) return
+        val navController = findNavController()
+        if (navController.currentDestination?.id != R.id.terminalFragment) return
+        isOpeningFileTransfer = true
+        runCatching {
+            navController.navigate(
+                TerminalFragmentDirections.actionTerminalToFileTransfer(active.sessionId)
+            )
+        }.onFailure {
+            isOpeningFileTransfer = false
+            android.util.Log.w("TerminalFragment", "File-transfer navigation was rejected")
         }
     }
 
@@ -701,7 +757,7 @@ class TerminalFragment : Fragment() {
             val text = clip.getItemAt(0).coerceToText(requireContext())?.toString().orEmpty()
             if (text.isNotEmpty()) viewModel.paste(sessionId, text)
         }.onFailure {
-            android.util.Log.w("TerminalFragment", "Unable to read clipboard", it)
+            android.util.Log.w("TerminalFragment", "Unable to read clipboard")
             context?.let { ctx ->
                 Toast.makeText(ctx, it.message ?: "无法读取剪贴板", Toast.LENGTH_SHORT).show()
             }
@@ -762,7 +818,7 @@ class TerminalFragment : Fragment() {
         isLeavingScreen = true
         val navigated = runCatching { navController.navigateUp() }
             .onFailure {
-                android.util.Log.w("TerminalFragment", "Navigation was rejected", it)
+                android.util.Log.w("TerminalFragment", "Navigation was rejected")
             }
             .getOrDefault(false)
         if (navigated) {
@@ -797,6 +853,11 @@ class TerminalFragment : Fragment() {
         renderedTabKeys = emptyList()
         _binding = null
         super.onDestroyView()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        isOpeningFileTransfer = false
     }
 
     private companion object {

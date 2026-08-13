@@ -2,11 +2,16 @@ package com.sshtool.ssh
 
 import android.content.Context
 import android.util.Log
+import com.jcraft.jsch.ChannelSftp
 import com.jcraft.jsch.ChannelShell
 import com.jcraft.jsch.JSch
 import com.jcraft.jsch.JSchException
 import com.jcraft.jsch.JSchPtyResizeCompat
 import com.jcraft.jsch.Session
+import com.jcraft.jsch.SftpException
+import com.jcraft.jsch.SftpProgressMonitor
+import com.sshtool.data.model.PortForwardDirection
+import com.sshtool.data.model.PortForwardRule
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
@@ -14,12 +19,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
 sealed class SSHConnectionState {
@@ -64,14 +72,19 @@ internal class SSHConnection(
     @Volatile private var channel: ChannelShell? = null
     @Volatile private var inputStream: InputStream? = null
     @Volatile private var outputStream: OutputStream? = null
+    private val activePortForwards = linkedSetOf<ActivePortForward>()
+    private val activeSftpChannels = linkedSetOf<ChannelSftp>()
+    @Volatile private var activeTransferChannel: ChannelSftp? = null
+    @Volatile private var activeTransferCommitInProgress = false
+    private val transportCloseStarted = AtomicBoolean(false)
 
     private var readerJob: Job? = null
     private var writerJob: Job? = null
     private val closed = AtomicBoolean(false)
     private val outbound = SSHOutboundQueue()
     private val scope = CoroutineScope(
-        Dispatchers.IO + SupervisorJob() + CoroutineExceptionHandler { _, throwable ->
-            Log.e(LOG_TAG, "Unhandled SSH coroutine exception", throwable)
+        Dispatchers.IO + SupervisorJob() + CoroutineExceptionHandler { _, _ ->
+            Log.e(LOG_TAG, "Unhandled SSH coroutine exception")
         }
     )
     private val ptyResizer = ConflatedPtyResizeDispatcher(
@@ -86,8 +99,8 @@ internal class SSHConnection(
             // additional manual request a protocol duplicate.
             JSchPtyResizeCompat.resize(target, columns, rows, 0, 0)
         },
-        onFailure = { failure ->
-            if (!closed.get()) Log.w(LOG_TAG, "setPtySize failed", failure)
+        onFailure = {
+            if (!closed.get()) Log.w(LOG_TAG, "setPtySize failed")
         }
     )
 
@@ -282,10 +295,10 @@ internal class SSHConnection(
         writerJob = scope.launch {
             try {
                 outbound.drainTo(stream)
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 if (!closed.get()) {
-                    Log.w(LOG_TAG, "SSH writer ended", e)
-                    listener?.onStateChanged(SSHConnectionState.Error(e.message ?: "发送失败"))
+                    Log.w(LOG_TAG, "SSH writer ended")
+                    listener?.onStateChanged(SSHConnectionState.Error("发送失败"))
                     disconnectInternal(notifyState = false)
                 }
             }
@@ -301,8 +314,8 @@ internal class SSHConnection(
                     if (length < 0) break
                     if (length > 0) listener?.onOutput(buffer.copyOf(length))
                 }
-            } catch (e: Exception) {
-                if (!closed.get()) Log.i(LOG_TAG, "SSH reader ended: ${e.message}", e)
+            } catch (_: Exception) {
+                if (!closed.get()) Log.i(LOG_TAG, "SSH reader ended")
             } finally {
                 if (!closed.get()) disconnect()
             }
@@ -314,6 +327,279 @@ internal class SSHConnection(
         ptyResizer.update(columns, rows)
     }
 
+    /**
+     * Start rules in order and isolate every failure. The operation-local
+     * Session handle is revalidated after JSch returns: disconnect may race a
+     * slow remote-forward request, and a late success must then be undone.
+     */
+    override suspend fun startPortForwards(
+        rules: List<PortForwardRule>,
+        onStateChanged: (PortForwardRuntimeState) -> Unit
+    ) = withContext(Dispatchers.IO) {
+        rules.filter { it.enabled }.forEach { rule ->
+            currentCoroutineContext().ensureActive()
+            onStateChanged(PortForwardRuntimeState(rule, PortForwardStatus.STARTING))
+            val sshSession = synchronized(resourceLock) {
+                session?.takeIf { !closed.get() && it.isConnected }
+            }
+            if (sshSession == null) {
+                onStateChanged(
+                    PortForwardRuntimeState(
+                        rule,
+                        PortForwardStatus.FAILED,
+                        error = "SSH 连接已断开"
+                    )
+                )
+                return@forEach
+            }
+
+            var installed: ActivePortForward? = null
+            try {
+                validatePortForward(rule)
+                val boundPort = when (rule.direction) {
+                    PortForwardDirection.LOCAL -> sshSession.setPortForwardingL(
+                        rule.bindAddress,
+                        rule.listenPort,
+                        rule.targetHost,
+                        rule.targetPort
+                    )
+                    PortForwardDirection.REMOTE -> {
+                        sshSession.setPortForwardingR(
+                            rule.bindAddress,
+                            rule.listenPort,
+                            rule.targetHost,
+                            rule.targetPort
+                        )
+                        rule.listenPort
+                    }
+                }
+                installed = ActivePortForward(rule, boundPort)
+                val retained = synchronized(resourceLock) {
+                    if (!closed.get() && session === sshSession && sshSession.isConnected) {
+                        activePortForwards += installed
+                        true
+                    } else {
+                        false
+                    }
+                }
+                if (!retained) {
+                    removePortForward(sshSession, installed)
+                    throw JSchException("SSH 连接已断开")
+                }
+                onStateChanged(
+                    PortForwardRuntimeState(
+                        rule = rule,
+                        status = PortForwardStatus.ACTIVE,
+                        boundPort = boundPort
+                    )
+                )
+            } catch (failure: CancellationException) {
+                if (installed != null) {
+                    synchronized(resourceLock) { activePortForwards.remove(installed) }
+                    removePortForward(sshSession, installed)
+                }
+                throw failure
+            } catch (failure: Exception) {
+                // Do not tear down the shell or other successful rules.
+                if (installed != null) {
+                    synchronized(resourceLock) { activePortForwards.remove(installed) }
+                    removePortForward(sshSession, installed)
+                }
+                onStateChanged(
+                    PortForwardRuntimeState(
+                        rule = rule,
+                        status = PortForwardStatus.FAILED,
+                        error = forwardingError(failure)
+                    )
+                )
+            }
+        }
+    }
+
+    override suspend fun listRemoteDirectory(path: String): RemoteDirectoryListing =
+        withSftpChannel(isTransfer = false) { sftp ->
+            val canonicalPath = sftp.realpath(path.ifBlank { "." })
+            val entries = ArrayList<RemoteFileEntry>()
+            var exceededLimit = false
+            sftp.ls(canonicalPath) { entry ->
+                val rawName = entry.filename
+                if (rawName != "." && rawName != "..") {
+                    if (entries.size >= MAX_DIRECTORY_ENTRIES) {
+                        exceededLimit = true
+                        return@ls ChannelSftp.LsEntrySelector.BREAK
+                    }
+                    val attrs = entry.attrs
+                    entries += RemoteFileEntry(
+                        // Preserve the exact protocol name for equality and
+                        // overwrite checks. UI must escape control characters
+                        // before rendering this untrusted string.
+                        name = rawName,
+                        path = joinRemotePath(canonicalPath, rawName),
+                        isDirectory = attrs.isDir,
+                        isSymbolicLink = attrs.isLink,
+                        size = attrs.size.coerceAtLeast(0),
+                        modifiedTimeMillis = attrs.mTime
+                            .takeIf { it > 0 }
+                            ?.toLong()
+                            ?.times(1_000L)
+                    )
+                }
+                ChannelSftp.LsEntrySelector.CONTINUE
+            }
+            if (exceededLimit) {
+                throw IllegalStateException("远程目录项目过多（最多 $MAX_DIRECTORY_ENTRIES 项）")
+            }
+            RemoteDirectoryListing(
+                path = canonicalPath,
+                entries = entries.sortedWith(
+                    compareByDescending<RemoteFileEntry> { it.isDirectory }
+                        .thenBy(String.CASE_INSENSITIVE_ORDER) { it.name }
+                )
+            )
+        }
+
+    override suspend fun uploadFile(
+        input: InputStream,
+        remoteDirectory: String,
+        fileName: String,
+        overwriteExisting: Boolean,
+        totalBytes: Long?,
+        onProgress: (Long) -> Unit
+    ): Unit = withSftpChannel(isTransfer = true) { sftp ->
+        requireValidRemoteFileName(fileName)
+        val canonicalDirectory = sftp.realpath(remoteDirectory.ifBlank { "." })
+        val targetPath = joinRemotePath(canonicalDirectory, fileName)
+        val temporaryPath = joinRemotePath(
+            canonicalDirectory,
+            ".sshtool-upload-${UUID.randomUUID()}"
+        )
+        val context = currentCoroutineContext()
+        var completed = false
+        var backupPath: String? = null
+        var backupContainsOriginal = false
+        var commitProtected = false
+        try {
+            sftp.put(
+                input,
+                temporaryPath,
+                progressMonitor(context, totalBytes, onProgress),
+                ChannelSftp.OVERWRITE
+            )
+            context.ensureActive()
+            // Once the complete temporary upload exists, keep the short
+            // rename/compensation transaction intact. A cancel still marks
+            // the coroutine cancelled, but cancelFileTransfer() must not tear
+            // down this channel while the original target is parked as a
+            // backup.
+            commitProtected = synchronized(resourceLock) {
+                if (closed.get() || activeTransferChannel !== sftp ||
+                    !sftp.isConnected || !context.isActive) {
+                    false
+                } else {
+                    activeTransferCommitInProgress = true
+                    true
+                }
+            }
+            if (!commitProtected) {
+                context.ensureActive()
+                throw IllegalStateException("SFTP 连接已断开")
+            }
+            // UI performs overwrite confirmation. Preserve the old file until
+            // the complete temporary upload is present, and retain a backup
+            // while committing so a failed rename can be compensated.
+            val existingTarget = remotePathAttributesOrNull(sftp, targetPath)
+            if (existingTarget != null) {
+                if (!overwriteExisting) {
+                    throw IllegalStateException("远程目标已存在，需要确认覆盖")
+                }
+                require(existingTarget.isReg) {
+                    "仅允许覆盖远程普通文件"
+                }
+                backupPath = joinRemotePath(
+                    canonicalDirectory,
+                    ".sshtool-backup-${UUID.randomUUID()}"
+                )
+                sftp.rename(targetPath, backupPath)
+                backupContainsOriginal = true
+                // lstat again after rename. The target can change between the
+                // first check and rename; never replace a concurrently-created
+                // directory or symlink with the uploaded file.
+                val movedTarget = sftp.lstat(backupPath)
+                require(movedTarget.isReg && !movedTarget.isLink) {
+                    "仅允许覆盖远程普通文件"
+                }
+            }
+            sftp.rename(temporaryPath, targetPath)
+            completed = true
+            backupPath?.let { runCatching { sftp.rm(it) } }
+        } finally {
+            if (!completed) {
+                runCatching { sftp.rm(temporaryPath) }
+                backupPath?.takeIf { backupContainsOriginal }?.let { backup ->
+                    // Compensation must never replace the primary exception.
+                    // Restore only into an empty target slot so a concurrent
+                    // writer's new target is not overwritten.
+                    val targetIsAbsent = runCatching {
+                        remotePathAttributesOrNull(sftp, targetPath) == null
+                    }.getOrDefault(false)
+                    if (targetIsAbsent) runCatching { sftp.rename(backup, targetPath) }
+                }
+            }
+            val closeAfterCommit = if (commitProtected) {
+                synchronized(resourceLock) {
+                    if (activeTransferChannel === sftp) {
+                        activeTransferCommitInProgress = false
+                    }
+                    closed.get()
+                }
+            } else {
+                false
+            }
+            // Explicit teardown marks the logical transport closed immediately,
+            // but physical channel shutdown is deferred across the small
+            // rename/compensation window. Close now that the remote target is
+            // either committed or restored. Never wait while holding
+            // resourceLock: the teardown path and this finally share it.
+            if (closeAfterCommit) closeTransport()
+        }
+    }
+
+    override suspend fun downloadFile(
+        remotePath: String,
+        output: OutputStream,
+        totalBytes: Long?,
+        onProgress: (Long) -> Unit
+    ): Unit = withSftpChannel(isTransfer = true) { sftp ->
+        // lstat the caller-selected entry before realpath so a symlink cannot
+        // be resolved first and thereby bypass the first-version restriction.
+        val attrs = sftp.lstat(remotePath)
+        require(!attrs.isDir) { "不能将远程目录作为单个文件下载" }
+        require(!attrs.isLink) { "第一版不支持下载符号链接" }
+        require(attrs.isReg) { "仅支持下载远程普通文件" }
+        val canonicalPath = sftp.realpath(remotePath)
+        val expectedBytes = totalBytes ?: attrs.size.takeIf { it >= 0 }
+        val context = currentCoroutineContext()
+        sftp.get(
+            canonicalPath,
+            output,
+            progressMonitor(context, expectedBytes, onProgress),
+            ChannelSftp.OVERWRITE,
+            0L
+        )
+        context.ensureActive()
+        output.flush()
+    }
+
+    override fun cancelFileTransfer() {
+        // Disconnecting just this SFTP channel interrupts its blocking JSch
+        // operation without changing the shell or underlying Session.
+        val transfer = synchronized(resourceLock) {
+            activeTransferChannel.takeUnless { activeTransferCommitInProgress }
+        }
+        runCatching { transfer?.disconnect() }
+            .onFailure { Log.w(LOG_TAG, "cancel SFTP transfer failed") }
+    }
+
     /** Idempotent teardown. Call from an IO context for explicit disconnects. */
     fun disconnect() = disconnectInternal(notifyState = true)
 
@@ -323,7 +609,10 @@ internal class SSHConnection(
         ptyResizer.close()
         readerJob?.cancel()
         writerJob?.cancel()
-        closeTransport()
+        val closeImmediately = synchronized(resourceLock) {
+            !activeTransferCommitInProgress
+        }
+        if (closeImmediately) closeTransport()
         val callback = listener
         listener = null
         if (notifyState) callback?.onStateChanged(SSHConnectionState.Disconnected)
@@ -334,25 +623,164 @@ internal class SSHConnection(
     override fun destroy() = disconnect()
 
     private fun closeTransport() {
+        if (!transportCloseStarted.compareAndSet(false, true)) return
         val input: InputStream?
         val output: OutputStream?
         val shell: ChannelShell?
         val sshSession: Session?
+        val portForwards: List<ActivePortForward>
+        val sftpChannels: List<ChannelSftp>
         synchronized(resourceLock) {
             input = inputStream
             output = outputStream
             shell = channel
             sshSession = session
+            portForwards = activePortForwards.toList()
+            sftpChannels = activeSftpChannels.toList()
+            activePortForwards.clear()
+            activeSftpChannels.clear()
+            activeTransferChannel = null
+            activeTransferCommitInProgress = false
             inputStream = null
             outputStream = null
             channel = null
             session = null
         }
-        runCatching { input?.close() }.onFailure { Log.w(LOG_TAG, "close input failed", it) }
-        runCatching { output?.close() }.onFailure { Log.w(LOG_TAG, "close output failed", it) }
-        runCatching { shell?.disconnect() }.onFailure { Log.w(LOG_TAG, "close channel failed", it) }
-        runCatching { sshSession?.disconnect() }.onFailure { Log.w(LOG_TAG, "close session failed", it) }
+        runCatching { input?.close() }.onFailure { Log.w(LOG_TAG, "close input failed") }
+        runCatching { output?.close() }.onFailure { Log.w(LOG_TAG, "close output failed") }
+        if (sshSession != null) {
+            portForwards.asReversed().forEach { removePortForward(sshSession, it) }
+        }
+        sftpChannels.forEach { sftp ->
+            runCatching { sftp.disconnect() }.onFailure { Log.w(LOG_TAG, "close SFTP failed") }
+        }
+        runCatching { shell?.disconnect() }.onFailure { Log.w(LOG_TAG, "close channel failed") }
+        runCatching { sshSession?.disconnect() }.onFailure { Log.w(LOG_TAG, "close session failed") }
     }
+
+    private suspend fun <T> withSftpChannel(
+        isTransfer: Boolean,
+        block: suspend (ChannelSftp) -> T
+    ): T = withContext(Dispatchers.IO) {
+        val operationContext = currentCoroutineContext()
+        operationContext.ensureActive()
+        val sshSession = synchronized(resourceLock) {
+            session?.takeIf { !closed.get() && it.isConnected }
+        } ?: throw IllegalStateException("SSH 连接未就绪")
+
+        val sftp = sshSession.openChannel("sftp") as ChannelSftp
+        val registered = synchronized(resourceLock) {
+            if (!operationContext.isActive || closed.get() ||
+                session !== sshSession || !sshSession.isConnected ||
+                (isTransfer && activeTransferChannel != null)) {
+                false
+            } else {
+                activeSftpChannels += sftp
+                if (isTransfer) activeTransferChannel = sftp
+                true
+            }
+        }
+        if (!registered) {
+            runCatching { sftp.disconnect() }
+            if (isTransfer && synchronized(resourceLock) { activeTransferChannel != null }) {
+                throw IllegalStateException("已有文件传输正在进行")
+            }
+            throw IllegalStateException("SSH 连接已断开")
+        }
+
+        try {
+            operationContext.ensureActive()
+            sftp.connect(SFTP_CONNECT_TIMEOUT_MILLIS)
+            operationContext.ensureActive()
+            val current = synchronized(resourceLock) {
+                !closed.get() && session === sshSession && sftp in activeSftpChannels
+            }
+            if (!current) throw CancellationException("SSH 连接已断开")
+            block(sftp)
+        } finally {
+            synchronized(resourceLock) {
+                activeSftpChannels.remove(sftp)
+                if (activeTransferChannel === sftp) activeTransferChannel = null
+            }
+            runCatching { sftp.disconnect() }
+                .onFailure { Log.w(LOG_TAG, "close operation SFTP failed") }
+        }
+    }
+
+    private fun progressMonitor(
+        coroutineContext: kotlin.coroutines.CoroutineContext,
+        totalBytes: Long?,
+        onProgress: (Long) -> Unit
+    ): SftpProgressMonitor = object : SftpProgressMonitor {
+        private var transferred = 0L
+
+        override fun init(operation: Int, source: String?, destination: String?, max: Long) = Unit
+
+        override fun count(count: Long): Boolean {
+            if (!coroutineContext.isActive || closed.get()) return false
+            transferred += count.coerceAtLeast(0)
+            onProgress(transferred)
+            return true
+        }
+
+        override fun end() {
+            if (totalBytes != null && transferred < totalBytes && coroutineContext.isActive) {
+                // Some servers/JSch paths do not deliver a final exact count;
+                // keep progress monotonic without fabricating bytes beyond the
+                // caller's known size.
+                onProgress(transferred)
+            }
+        }
+    }
+
+    private fun validatePortForward(rule: PortForwardRule) {
+        require(rule.bindAddress.isNotBlank()) { "监听地址不能为空" }
+        require(rule.targetHost.isNotBlank()) { "目标地址不能为空" }
+        require(rule.listenPort in 1..65535) { "监听端口必须在 1..65535 之间" }
+        require(rule.targetPort in 1..65535) { "目标端口必须在 1..65535 之间" }
+    }
+
+    private fun removePortForward(sshSession: Session, active: ActivePortForward) {
+        runCatching {
+            when (active.rule.direction) {
+                PortForwardDirection.LOCAL -> sshSession.delPortForwardingL(
+                    active.rule.bindAddress,
+                    active.boundPort
+                )
+                PortForwardDirection.REMOTE -> sshSession.delPortForwardingR(
+                    active.rule.bindAddress,
+                    active.boundPort
+                )
+            }
+        }.onFailure { Log.w(LOG_TAG, "remove port forward failed") }
+    }
+
+    private fun forwardingError(failure: Throwable): String =
+        failure.message?.take(240)?.takeIf { it.isNotBlank() } ?: "端口映射启动失败"
+
+    private fun requireValidRemoteFileName(fileName: String) {
+        require(fileName.isNotBlank() && fileName != "." && fileName != "..") {
+            "远程文件名无效"
+        }
+        require('/' !in fileName && '\u0000' !in fileName) { "远程文件名不能包含路径分隔符" }
+    }
+
+    private fun joinRemotePath(directory: String, name: String): String =
+        if (directory == "/") "/$name" else "${directory.trimEnd('/')}/$name"
+
+    private fun remotePathAttributesOrNull(
+        sftp: ChannelSftp,
+        path: String
+    ): com.jcraft.jsch.SftpATTRS? = try {
+        sftp.lstat(path)
+    } catch (failure: SftpException) {
+        if (failure.id == ChannelSftp.SSH_FX_NO_SUCH_FILE) null else throw failure
+    }
+
+    private data class ActivePortForward(
+        val rule: PortForwardRule,
+        val boundPort: Int
+    )
 
     /**
      * A concurrent disconnect can clear the shared fields while a blocking
@@ -365,15 +793,17 @@ internal class SSHConnection(
         shell: ChannelShell?,
         sshSession: Session?
     ) {
-        runCatching { input?.close() }.onFailure { Log.w(LOG_TAG, "close candidate input failed", it) }
-        runCatching { output?.close() }.onFailure { Log.w(LOG_TAG, "close candidate output failed", it) }
-        runCatching { shell?.disconnect() }.onFailure { Log.w(LOG_TAG, "close candidate channel failed", it) }
-        runCatching { sshSession?.disconnect() }.onFailure { Log.w(LOG_TAG, "close candidate session failed", it) }
+        runCatching { input?.close() }.onFailure { Log.w(LOG_TAG, "close candidate input failed") }
+        runCatching { output?.close() }.onFailure { Log.w(LOG_TAG, "close candidate output failed") }
+        runCatching { shell?.disconnect() }.onFailure { Log.w(LOG_TAG, "close candidate channel failed") }
+        runCatching { sshSession?.disconnect() }.onFailure { Log.w(LOG_TAG, "close candidate session failed") }
     }
 
     private companion object {
         const val LOG_TAG = "SSHConnection"
         const val DEFAULT_PTY_COLUMNS = 80
         const val DEFAULT_PTY_ROWS = 24
+        const val SFTP_CONNECT_TIMEOUT_MILLIS = 30_000
+        const val MAX_DIRECTORY_ENTRIES = 10_000
     }
 }

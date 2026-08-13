@@ -1,16 +1,25 @@
 package com.sshtool.ui.terminal
 
+import android.net.Uri
+import android.provider.OpenableColumns
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.sshtool.data.model.Host
 import com.sshtool.data.repository.HostRepository
+import com.sshtool.ssh.FileTransferDirection
+import com.sshtool.ssh.FileTransferState
+import com.sshtool.ssh.PortForwardRuntimeState
+import com.sshtool.ssh.RemoteDirectoryListing
 import com.sshtool.ssh.SSHConnectionListener
 import com.sshtool.ssh.SSHConnectionManager
 import com.sshtool.ssh.SSHConnectionState
 import com.termux.terminal.TerminalSession
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,10 +27,12 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.io.FileNotFoundException
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 
@@ -30,7 +41,10 @@ data class TerminalTabState(
     val host: Host,
     val bridge: SshTerminalSession,
     val terminalSession: TerminalSession,
-    val connectionState: SSHConnectionState
+    val connectionState: SSHConnectionState,
+    val portForwardStates: List<PortForwardRuntimeState> = emptyList(),
+    val fileTransferState: FileTransferState = FileTransferState.Idle,
+    val configurationStale: Boolean = false
 )
 
 data class TerminalUiState(
@@ -51,14 +65,28 @@ class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
         val bridge: SshTerminalSession,
         val terminalSession: TerminalSession,
         var connectionState: SSHConnectionState = SSHConnectionState.Connecting,
+        var configurationStale: Boolean = false,
+        val configurationGeneration: AtomicLong = AtomicLong(0),
         val operationGeneration: AtomicLong = AtomicLong(0),
         var lastSendRejectionNanos: Long? = null
+    )
+
+    private data class TransferStateOverride(
+        val state: FileTransferState,
+        /** Preserve the local state only until the manager advances this session. */
+        val managerStateAtCreation: FileTransferState
     )
 
     private val manager = SSHConnectionManager()
     private val sessions = linkedMapOf<String, ManagedSession>()
     private val sessionMutex = Mutex()
     private var activeSessionId: String? = null
+    private var portForwardStates: Map<String, List<PortForwardRuntimeState>> = emptyMap()
+    private var managerFileTransferStates: Map<String, FileTransferState> = emptyMap()
+    private val transferStateOverrides = mutableMapOf<String, TransferStateOverride>()
+    /** Masks a transport generation's terminal/progress state after it is retired. */
+    private val resetFileTransferSessions = mutableSetOf<String>()
+    private val transferRequestJobs = mutableMapOf<String, Job>()
 
     private val _uiState = MutableStateFlow(TerminalUiState())
     val uiState: StateFlow<TerminalUiState> = _uiState.asStateFlow()
@@ -68,6 +96,28 @@ class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
         onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
     val events: SharedFlow<TerminalUiEvent> = _events.asSharedFlow()
+
+    init {
+        // Manager flows are transport-owned and can change without an SSH
+        // connection-state callback (progress ticks and individual forwarding
+        // failures). Fold them into the activity-owned UI snapshot.
+        viewModelScope.launch {
+            manager.portForwardStates.collect { states ->
+                portForwardStates = states
+                publish()
+            }
+        }
+        viewModelScope.launch {
+            manager.fileTransferStates.collect { states ->
+                managerFileTransferStates = states
+                transferStateOverrides.entries.removeAll { (sessionId, override) ->
+                    (states[sessionId] ?: FileTransferState.Idle) !=
+                        override.managerStateAtCreation
+                }
+                publish()
+            }
+        }
+    }
 
     /** Reuse an existing session for list navigation; otherwise create one. */
     suspend fun ensureSessionForHost(hostId: Long): String? = sessionMutex.withLock {
@@ -109,7 +159,11 @@ class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
             sessionId,
             safeHost,
             repository,
-            connectionListener(managed, managed.operationGeneration.get())
+            connectionListener(
+                managed,
+                managed.operationGeneration.get(),
+                managed.configurationGeneration.get()
+            )
         )
         return sessionId
     }
@@ -117,7 +171,8 @@ class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
     /** Bind callbacks to one VM operation token before manager dispatch. */
     private fun connectionListener(
         managed: ManagedSession,
-        operationGeneration: Long
+        operationGeneration: Long,
+        connectionConfigurationGeneration: Long
     ): SSHConnectionListener = object : SSHConnectionListener {
         override fun onStateChanged(state: SSHConnectionState) {
             onMain {
@@ -129,6 +184,12 @@ class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
                     // session's current emulator geometry at its own Connected
                     // transition, even when another tab is active.
                     if (state is SSHConnectionState.Connected) {
+                        // A host edit can finish while an old handshake is in
+                        // flight. Never let its late Connected callback erase
+                        // the explicit "reconnect required" marker.
+                        managed.configurationStale =
+                            managed.configurationGeneration.get() !=
+                                connectionConfigurationGeneration
                         managed.terminalSession.emulator?.let { emulator ->
                             manager.updatePtySizeForSession(
                                 managed.id,
@@ -196,6 +257,7 @@ class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
     }
 
     fun disconnect(sessionId: String) {
+        cancelTransferForTransportChange(sessionId)
         sessions[sessionId]?.let {
             it.operationGeneration.incrementAndGet()
             it.connectionState = SSHConnectionState.Disconnected
@@ -204,18 +266,102 @@ class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
         manager.disconnect(sessionId)
     }
 
+    /**
+     * Called after an existing host (including its forwarding rules) is saved.
+     * Connected transports intentionally keep their immutable old profile;
+     * attempts that have not connected yet are retired so they cannot finish
+     * with an obsolete endpoint or trust prompt.
+     */
+    fun markHostConfigurationStale(hostId: Long) {
+        val matching = sessions.values.filter { it.host.id == hostId }
+        val pendingAttempts = mutableListOf<String>()
+        matching.forEach { managed ->
+            managed.configurationGeneration.incrementAndGet()
+            managed.configurationStale = true
+            when (managed.connectionState) {
+                SSHConnectionState.Connecting,
+                is SSHConnectionState.HostKeyConfirmationRequired,
+                is SSHConnectionState.HostKeyChanged -> {
+                    managed.operationGeneration.incrementAndGet()
+                    managed.connectionState = SSHConnectionState.Disconnected
+                    pendingAttempts += managed.id
+                }
+                else -> Unit
+            }
+        }
+        if (matching.isNotEmpty()) {
+            publish()
+            // Connected sessions keep their immutable old profile and merely
+            // show "configuration stale". Only unfinished handshakes/trust
+            // prompts are retired, so an old endpoint cannot finish after the
+            // editor has committed a new one.
+            pendingAttempts.forEach { sessionId ->
+                cancelTransferForTransportChange(sessionId)
+                manager.disconnect(sessionId)
+            }
+        }
+    }
+
+    fun hasSessionsForHost(hostId: Long): Boolean =
+        sessions.values.any { it.host.id == hostId }
+
     fun closeSession(sessionId: String) {
         val removed = sessions.remove(sessionId) ?: return
         removed.operationGeneration.incrementAndGet()
+        cancelTransferForTransportChange(sessionId)
         removed.bridge.close()
         manager.removeSession(sessionId)
+        resetFileTransferSessions.remove(sessionId)
+        transferStateOverrides.remove(sessionId)
         if (activeSessionId == sessionId) activeSessionId = sessions.keys.lastOrNull()
         publish()
     }
 
+    /**
+     * Atomically makes all matching logical sessions unreachable, then waits
+     * for their transport cleanup. Host deletion calls this before removing
+     * credentials and forwarding rules from persistence.
+     */
+    suspend fun closeSessionsForHost(hostId: Long) {
+        val localTransferJobs = mutableListOf<Job>()
+        val removed = withContext(Dispatchers.Main.immediate) {
+            val matching = sessions.values.filter { it.host.id == hostId }
+            if (matching.isEmpty()) return@withContext emptyList<ManagedSession>()
+            matching.forEach { managed ->
+                sessions.remove(managed.id)
+                managed.operationGeneration.incrementAndGet()
+                transferRequestJobs.remove(managed.id)?.let { job ->
+                    job.cancel()
+                    localTransferJobs += job
+                }
+                transferStateOverrides.remove(managed.id)
+                resetFileTransferSessions.remove(managed.id)
+                managed.bridge.close()
+            }
+            if (activeSessionId !in sessions) activeSessionId = sessions.keys.lastOrNull()
+            publish()
+            matching
+        }
+        var cleanupFailure: Throwable? = null
+        // Once the logical tabs have disappeared, finish physical cleanup even
+        // if the deleting Fragment/Activity is concurrently being destroyed.
+        // Persistence is touched only after all SFTP jobs and transports have
+        // reached a terminal state.
+        withContext(NonCancellable) {
+            removed.forEach { managed ->
+                runCatching { manager.removeSessionAndAwait(managed.id) }
+                    .onFailure { if (cleanupFailure == null) cleanupFailure = it }
+            }
+            localTransferJobs.forEach { it.join() }
+        }
+        cleanupFailure?.let { throw it }
+    }
+
     fun reconnect(sessionId: String) {
         val managed = sessions[sessionId] ?: return
+        cancelTransferForTransportChange(sessionId)
         val operationGeneration = managed.operationGeneration.incrementAndGet()
+        val connectionConfigurationGeneration = managed.configurationGeneration.get()
         managed.connectionState = SSHConnectionState.Connecting
         publish()
         viewModelScope.launch {
@@ -234,7 +380,11 @@ class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
                 manager.reconnect(
                     sessionId,
                     refreshed.copy(),
-                    connectionListener(managed, operationGeneration)
+                    connectionListener(
+                        managed,
+                        operationGeneration,
+                        connectionConfigurationGeneration
+                    )
                 )
             } catch (e: CancellationException) {
                 throw e
@@ -254,15 +404,265 @@ class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
 
     fun trustAndReconnect(sessionId: String) {
         val managed = sessions[sessionId] ?: return
+        cancelTransferForTransportChange(sessionId)
         val operationGeneration = managed.operationGeneration.incrementAndGet()
+        val connectionConfigurationGeneration = managed.configurationGeneration.get()
         manager.reattachListener(
             sessionId,
-            connectionListener(managed, operationGeneration)
+            connectionListener(
+                managed,
+                operationGeneration,
+                connectionConfigurationGeneration
+            )
         )
         managed.connectionState = SSHConnectionState.Connecting
         publish()
         manager.trustAndReconnect(sessionId)
     }
+
+    suspend fun listRemoteDirectory(
+        sessionId: String,
+        path: String = "."
+    ): RemoteDirectoryListing {
+        require(sessions.containsKey(sessionId)) { "终端会话已不可用" }
+        return manager.listRemoteDirectory(sessionId, path)
+    }
+
+    /** Start an upload owned by this activity ViewModel, not by the file page. */
+    fun uploadFile(
+        sessionId: String,
+        source: Uri,
+        remoteDirectory: String,
+        fileName: String,
+        overwriteExisting: Boolean = false
+    ) {
+        if (!canStartTransfer(sessionId)) return
+        val managerStateBeforeRequest =
+            managerFileTransferStates[sessionId] ?: FileTransferState.Idle
+        beginTransferRequest(
+            sessionId,
+            FileTransferState.Running(
+                direction = FileTransferDirection.UPLOAD,
+                remotePath = remotePath(remoteDirectory, fileName),
+                transferredBytes = 0
+            ),
+            managerStateBeforeRequest
+        )
+        val job = viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val resolver = repositoryContext().contentResolver
+                    val totalBytes = queryContentSize(source)
+                    val input = resolver.openInputStream(source)
+                        ?: throw FileNotFoundException("无法打开所选文件")
+                    input.use {
+                        manager.uploadFile(
+                            sessionId = sessionId,
+                            input = it,
+                            remoteDirectory = remoteDirectory,
+                            fileName = fileName,
+                            overwriteExisting = overwriteExisting,
+                            totalBytes = totalBytes
+                        )
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                recordPreflightTransferFailure(
+                    sessionId,
+                    FileTransferDirection.UPLOAD,
+                    remotePath(remoteDirectory, fileName),
+                    managerStateBeforeRequest
+                )
+                // Provider exceptions can include a sensitive content URI.
+                Log.w(LOG_TAG, "Upload request failed")
+            }
+        }
+        trackTransferRequest(sessionId, job)
+    }
+
+    /** Start a download and remove its SAF document when it stays incomplete. */
+    fun downloadFile(
+        sessionId: String,
+        remotePath: String,
+        destination: Uri,
+        totalBytes: Long? = null
+    ) {
+        if (!canStartTransfer(sessionId)) return
+        val managerStateBeforeRequest =
+            managerFileTransferStates[sessionId] ?: FileTransferState.Idle
+        beginTransferRequest(
+            sessionId,
+            FileTransferState.Running(
+                direction = FileTransferDirection.DOWNLOAD,
+                remotePath = remotePath,
+                transferredBytes = 0,
+                totalBytes = totalBytes
+            ),
+            managerStateBeforeRequest
+        )
+        val job = viewModelScope.launch {
+            var completed = false
+            try {
+                withContext(Dispatchers.IO) {
+                    val resolver = repositoryContext().contentResolver
+                    val output = resolver.openOutputStream(destination, "w")
+                        ?: throw FileNotFoundException("无法创建本地文件")
+                    output.use {
+                        manager.downloadFile(
+                            sessionId = sessionId,
+                            remotePath = remotePath,
+                            output = it,
+                            totalBytes = totalBytes
+                        )
+                    }
+                    completed = true
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                recordPreflightTransferFailure(
+                    sessionId,
+                    FileTransferDirection.DOWNLOAD,
+                    remotePath,
+                    managerStateBeforeRequest
+                )
+                // Provider exceptions can include a sensitive content URI.
+                Log.w(LOG_TAG, "Download request failed")
+            } finally {
+                if (!completed) {
+                    withContext(NonCancellable + Dispatchers.IO) {
+                        runCatching {
+                            repositoryContext().contentResolver.delete(destination, null, null)
+                        }.onFailure {
+                            Log.w(LOG_TAG, "Unable to delete incomplete download")
+                        }
+                    }
+                }
+            }
+        }
+        trackTransferRequest(sessionId, job)
+    }
+
+    fun cancelFileTransfer(sessionId: String) {
+        val current = effectiveFileTransferState(sessionId)
+        if (current is FileTransferState.Running) {
+            val managerState = managerFileTransferStates[sessionId] ?: FileTransferState.Idle
+            transferStateOverrides[sessionId] = TransferStateOverride(
+                FileTransferState.Cancelled(
+                    direction = current.direction,
+                    remotePath = current.remotePath,
+                    transferredBytes = current.transferredBytes,
+                    totalBytes = current.totalBytes
+                ),
+                managerState
+            )
+            publish()
+        }
+        transferRequestJobs[sessionId]?.cancel()
+        manager.cancelFileTransfer(sessionId)
+    }
+
+    private fun cancelTransferForTransportChange(sessionId: String) {
+        // Keep the cancelling job registered until its finally block closes
+        // streams and removes an incomplete SAF destination. This prevents a
+        // new transfer from starting in that cleanup window.
+        transferRequestJobs[sessionId]?.cancel()
+        transferStateOverrides.remove(sessionId)
+        resetFileTransferSessions += sessionId
+        // Also interrupt a blocking JSch SFTP call immediately. A local job
+        // can still be in URI/provider setup and absent from the manager, so
+        // both cancellation paths are required.
+        manager.cancelFileTransfer(sessionId)
+    }
+
+    private fun canStartTransfer(sessionId: String): Boolean {
+        val managed = sessions[sessionId] ?: return false
+        return managed.connectionState is SSHConnectionState.Connected &&
+            transferRequestJobs[sessionId]?.isCompleted != false &&
+            (sessionId in resetFileTransferSessions ||
+                managerFileTransferStates[sessionId] !is FileTransferState.Running)
+    }
+
+    private fun beginTransferRequest(
+        sessionId: String,
+        state: FileTransferState.Running,
+        managerStateBeforeRequest: FileTransferState
+    ) {
+        resetFileTransferSessions.remove(sessionId)
+        // URI/provider preparation can take time before the manager emits its
+        // first Running state. Publish a local request state immediately so a
+        // second tap cannot race into another transfer.
+        transferStateOverrides[sessionId] = TransferStateOverride(
+            state,
+            managerStateBeforeRequest
+        )
+        publish()
+    }
+
+    private fun trackTransferRequest(sessionId: String, job: Job) {
+        transferRequestJobs[sessionId] = job
+        job.invokeOnCompletion {
+            onMain {
+                if (transferRequestJobs[sessionId] === job) {
+                    transferRequestJobs.remove(sessionId)
+                }
+            }
+        }
+    }
+
+    private fun queryContentSize(uri: Uri): Long? {
+        val resolver = repositoryContext().contentResolver
+        return runCatching {
+            resolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                val column = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (column >= 0 && cursor.moveToFirst() && !cursor.isNull(column)) {
+                    cursor.getLong(column).takeIf { it >= 0 }
+                } else {
+                    null
+                }
+            }
+        }.getOrNull()
+    }
+
+    private fun recordPreflightTransferFailure(
+        sessionId: String,
+        direction: FileTransferDirection,
+        remotePath: String,
+        managerStateBeforeRequest: FileTransferState
+    ) {
+        onMain {
+            if (!sessions.containsKey(sessionId)) return@onMain
+            val managerState = managerFileTransferStates[sessionId] ?: FileTransferState.Idle
+            // Manager failures already publish a richer state with byte
+            // progress. Only synthesize a state when URI/provider setup failed
+            // before the request reached the manager.
+            if (managerState is FileTransferState.Failed &&
+                managerState != managerStateBeforeRequest) return@onMain
+            // File-provider messages may include a content URI or local file
+            // name. Keep the durable UI state generic just like manager-side
+            // SFTP failures.
+            val detail = "无法准备文件传输"
+            transferStateOverrides[sessionId] = TransferStateOverride(
+                state = FileTransferState.Failed(
+                    direction = direction,
+                    remotePath = remotePath,
+                    transferredBytes = 0,
+                    error = detail
+                ),
+                managerStateAtCreation = managerState
+            )
+            publish()
+        }
+    }
+
+    private fun remotePath(directory: String, fileName: String): String =
+        when {
+            directory == "/" -> "/$fileName"
+            directory.endsWith('/') -> directory + fileName
+            else -> "$directory/$fileName"
+        }
 
     private fun publish() {
         _uiState.value = TerminalUiState(
@@ -276,10 +676,27 @@ class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
         host = session.host,
         bridge = session.bridge,
         terminalSession = session.terminalSession,
-        connectionState = session.connectionState
+        connectionState = session.connectionState,
+        portForwardStates = portForwardStates[session.id].orEmpty(),
+        fileTransferState = effectiveFileTransferState(session.id),
+        configurationStale = session.configurationStale
     )
 
+    private fun effectiveFileTransferState(sessionId: String): FileTransferState =
+        if (sessionId in resetFileTransferSessions) {
+            FileTransferState.Idle
+        } else {
+            transferStateOverrides[sessionId]?.state
+                ?: managerFileTransferStates[sessionId]
+                ?: FileTransferState.Idle
+        }
+
     override fun onCleared() {
+        sessions.keys.forEach(manager::cancelFileTransfer)
+        transferRequestJobs.values.forEach { it.cancel() }
+        transferRequestJobs.clear()
+        resetFileTransferSessions.clear()
+        transferStateOverrides.clear()
         sessions.values.forEach { it.bridge.close() }
         sessions.clear()
         _uiState.value = TerminalUiState()
@@ -288,6 +705,7 @@ class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
     }
 
     private companion object {
+        const val LOG_TAG = "TerminalViewModel"
         const val SEND_REJECTION_EVENT_INTERVAL_NANOS = 2_000_000_000L
     }
 }
