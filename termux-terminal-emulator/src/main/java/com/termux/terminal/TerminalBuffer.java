@@ -234,7 +234,13 @@ public final class TerminalBuffer {
             // Copy away old state and update new:
             TerminalRow[] oldLines = mLines;
             mLines = new TerminalRow[newTotalRows];
-            for (int i = 0; i < newTotalRows; i++)
+            // Keep the scrollback capacity without eagerly allocating every
+            // history row. Empty history slots are already represented by
+            // null throughout this class and are allocated when they enter
+            // the visible screen or receive reflowed content. Allocating all
+            // transcript rows here makes a column resize consume several MB
+            // per otherwise-empty terminal session.
+            for (int i = 0; i < newRows; i++)
                 mLines[i] = new TerminalRow(newColumns, currentStyle);
 
             final int oldActiveTranscriptRows = mActiveTranscriptRows;

@@ -17,19 +17,44 @@
         app:navigationIcon="@drawable/ic_back"
         app:titleTextColor="@android:color/white" />
 
-    <com.google.android.material.tabs.TabLayout
-        android:id="@+id/tab_layout"
+    <LinearLayout
+        android:id="@+id/tab_bar"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:background="#2D2D2D"
+        android:orientation="horizontal"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/toolbar"
-        app:tabIndicatorColor="#4FC3F7"
-        app:tabMode="scrollable"
-        app:tabRippleColor="#33FFFFFF"
-        app:tabSelectedTextColor="@android:color/white"
-        app:tabTextColor="#AAAAAA" />
+        app:layout_constraintTop_toBottomOf="@id/toolbar">
+
+        <com.google.android.material.tabs.TabLayout
+            android:id="@+id/tab_layout"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:background="#2D2D2D"
+            app:tabIndicatorColor="#4FC3F7"
+            app:tabMode="scrollable"
+            app:tabRippleColor="#33FFFFFF"
+            app:tabSelectedTextColor="@android:color/white"
+            app:tabTextColor="#AAAAAA" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_add_session"
+            style="@style/Widget.MaterialComponents.Button.TextButton"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:contentDescription="@string/add_ssh_session_desc"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:minWidth="48dp"
+            android:minHeight="48dp"
+            android:padding="0dp"
+            android:text="+"
+            android:textColor="@android:color/white"
+            android:textSize="22sp" />
+
+    </LinearLayout>
 
     <LinearLayout
         android:id="@+id/status_bar"
@@ -42,7 +67,7 @@
         android:padding="8dp"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/tab_layout">
+        app:layout_constraintTop_toBottomOf="@id/tab_bar">
 
         <View
             android:id="@+id/status_indicator"

@@ -2,6 +2,45 @@ package com.termux.terminal;
 
 public class ScreenBufferTest extends TerminalTestCase {
 
+	public void testColumnResizeAllocatesOnlyVisibleRows() {
+		final int screenRows = 24;
+		final int totalRows = 10_000;
+		TerminalBuffer screen = new TerminalBuffer(80, totalRows, screenRows);
+
+		screen.resize(100, screenRows, totalRows, new int[]{0, 0}, TextStyle.NORMAL, false);
+
+		int allocatedRows = 0;
+		for (TerminalRow row : screen.mLines) {
+			if (row != null) allocatedRows++;
+		}
+		assertEquals(screenRows, allocatedRows);
+		assertEquals(totalRows, screen.mLines.length);
+	}
+
+	public void testLazyRowsRemainSafeAsHistoryWrapsAfterColumnResize() {
+		final int screenRows = 3;
+		final int totalRows = 8;
+		TerminalBuffer screen = new TerminalBuffer(5, totalRows, screenRows);
+		screen.resize(7, screenRows, totalRows, new int[]{0, 0}, TextStyle.NORMAL, false);
+
+		for (int i = 0; i < totalRows * 3; i++) {
+			screen.scrollDownOneLine(0, screenRows, TextStyle.NORMAL);
+			int codePoint = 'A' + (i % 26);
+			screen.setChar(0, screenRows - 1, codePoint, TextStyle.NORMAL);
+			TerminalRow bottom = screen.mLines[screen.externalToInternalRow(screenRows - 1)];
+			assertNotNull(bottom);
+			assertEquals(codePoint, bottom.mText[0]);
+		}
+		assertEquals(totalRows - screenRows, screen.getActiveTranscriptRows());
+
+		screen.clearTranscript();
+		assertEquals(0, screen.getActiveTranscriptRows());
+		screen.scrollDownOneLine(0, screenRows, TextStyle.NORMAL);
+		for (int row = 0; row < screenRows; row++) {
+			assertNotNull(screen.mLines[screen.externalToInternalRow(row)]);
+		}
+	}
+
 	public void testBasics() {
 		TerminalBuffer screen = new TerminalBuffer(5, 3, 3);
 		assertEquals("", screen.getTranscriptText());

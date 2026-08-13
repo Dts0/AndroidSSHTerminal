@@ -268,28 +268,22 @@ class TerminalFragment : Fragment() {
     }
 
     private fun setupTabLayout() {
+        binding.btnAddSession.setOnClickListener { showHostPickerDialog() }
         binding.tabLayout.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
             override fun onTabSelected(tab: TabLayout.Tab) {
                 if (renderingTabs) return
                 val tag = tab.tag as? String ?: return
-                if (tag == ADD_TAB_TAG) {
-                    reselectActiveTab()
-                    showHostPickerDialog()
-                } else {
-                    // Attach synchronously before publishing the new active id.
-                    // Otherwise a physical-key or late IME callback delivered
-                    // before the StateFlow collector runs can target the old
-                    // TerminalSession while the UI already shows the new tab.
-                    viewModel.uiState.value.sessions
-                        .firstOrNull { it.sessionId == tag }
-                        ?.let(::attachTerminalSession)
-                    viewModel.selectSession(tag)
-                }
+                // Attach synchronously before publishing the new active id.
+                // Otherwise a physical-key or late IME callback delivered
+                // before the StateFlow collector runs can target the old
+                // TerminalSession while the UI already shows the new tab.
+                viewModel.uiState.value.sessions
+                    .firstOrNull { it.sessionId == tag }
+                    ?.let(::attachTerminalSession)
+                viewModel.selectSession(tag)
             }
             override fun onTabUnselected(tab: TabLayout.Tab) = Unit
-            override fun onTabReselected(tab: TabLayout.Tab) {
-                if (!renderingTabs && tab.tag == ADD_TAB_TAG) showHostPickerDialog()
-            }
+            override fun onTabReselected(tab: TabLayout.Tab) = Unit
         })
     }
 
@@ -320,7 +314,7 @@ class TerminalFragment : Fragment() {
     private fun render(state: TerminalUiState) {
         val b = _binding ?: return
         bindScreenObservers(state.sessions)
-        rebuildTabsIfNeeded(state.sessions)
+        rebuildTabsIfNeeded(state.sessions, state.activeSessionId)
 
         val active = state.sessions.firstOrNull { it.sessionId == state.activeSessionId }
         if (active == null) {
@@ -400,10 +394,14 @@ class TerminalFragment : Fragment() {
         observedBridges.clear()
     }
 
-    private fun rebuildTabsIfNeeded(sessions: List<TerminalTabState>) {
+    private fun rebuildTabsIfNeeded(
+        sessions: List<TerminalTabState>,
+        activeSessionId: String?
+    ) {
         val keys = sessions.map { it.sessionId to it.host.name }
         if (keys == renderedTabKeys) return
         renderedTabKeys = keys
+        val selectedSessionId = activeSessionId ?: sessions.firstOrNull()?.sessionId
         renderingTabs = true
         try {
             binding.tabLayout.removeAllTabs()
@@ -414,13 +412,9 @@ class TerminalFragment : Fragment() {
                 val label = if (number == 1) session.host.name else "${session.host.name} ($number)"
                 binding.tabLayout.addTab(
                     binding.tabLayout.newTab().setText(label).setTag(session.sessionId),
-                    false
+                    session.sessionId == selectedSessionId
                 )
             }
-            binding.tabLayout.addTab(
-                binding.tabLayout.newTab().setText("+").setTag(ADD_TAB_TAG),
-                sessions.isEmpty()
-            )
         } finally {
             renderingTabs = false
         }
@@ -437,10 +431,6 @@ class TerminalFragment : Fragment() {
         } finally {
             renderingTabs = false
         }
-    }
-
-    private fun reselectActiveTab() {
-        viewModel.uiState.value.activeSessionId?.let(::selectTab)
     }
 
     private fun updateTabIndicators(sessions: List<TerminalTabState>) {
@@ -861,7 +851,6 @@ class TerminalFragment : Fragment() {
     }
 
     private companion object {
-        const val ADD_TAB_TAG = "+"
         const val STATE_ENTRY_HOST_REQUEST_CONSUMED = "entry_host_request_consumed"
         const val STATE_TERMINAL_FONT_SIZE = "terminal_font_size"
     }
