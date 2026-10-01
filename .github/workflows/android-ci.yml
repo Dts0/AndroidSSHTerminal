@@ -16,25 +16,30 @@ concurrency:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    # Keep the image stable instead of following ubuntu-latest migrations.
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
           cache: gradle
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Accept SDK licenses
-        run: yes | sdkmanager --licenses >/dev/null || true
+        uses: android-actions/setup-android@v4.0.4
+        with:
+          # Tools 16.0 support JDK 17; newer defaults can require a newer JDK.
+          cmdline-tools-version: '12266719'
+          # Install only the explicit packages below, never the removed "tools" package.
+          packages: ''
+          accept-android-sdk-licenses: true
+          log-accepted-android-sdk-licenses: false
 
       - name: Install Android SDK / NDK components
         run: |
@@ -69,7 +74,8 @@ jobs:
 
           readelf="$ANDROID_SDK_ROOT/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
           native_lib_dir="app/build/intermediates/merged_native_libs/release/out/lib"
-          apkanalyzer="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/apkanalyzer"
+          # Use the version selected by setup-android, not the image's "latest".
+          apkanalyzer="$(command -v apkanalyzer)"
 
           test -x "$readelf"
           test -d "$native_lib_dir"
