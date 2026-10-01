@@ -1,5 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <style name="Widget.SSHTerminal.ExtraKey" parent="Widget.AppCompat.Button">
+        <item name="android:background">@drawable/bg_terminal_key</item>
+        <item name="backgroundTint">@null</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:minHeight">32dp</item>
+        <item name="android:paddingHorizontal">2dp</item>
+        <item name="android:paddingVertical">0dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textColor">@color/terminal_key_text</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:focusableInTouchMode">false</item>
+    </style>
+
     <style name="TextAppearance.SSHTerminal.Tab" parent="TextAppearance.MaterialComponents.Button">
         <item name="android:textAllCaps">false</item>
         <item name="android:textSize">12sp</item>

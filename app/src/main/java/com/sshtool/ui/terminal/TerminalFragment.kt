@@ -247,6 +247,8 @@ class TerminalFragment : Fragment() {
         binding.btnPgdn.setOnClickListener { sendTerminalKey(KeyEvent.KEYCODE_PAGE_DOWN) }
         binding.btnHome.setOnClickListener { sendTerminalKey(KeyEvent.KEYCODE_MOVE_HOME) }
         binding.btnEnd.setOnClickListener { sendTerminalKey(KeyEvent.KEYCODE_MOVE_END) }
+        binding.btnDel.setOnClickListener { sendTerminalKey(KeyEvent.KEYCODE_FORWARD_DEL) }
+        binding.btnEnter.setOnClickListener { sendTerminalKey(KeyEvent.KEYCODE_ENTER) }
         setTerminalInputEnabled(false)
     }
 
@@ -737,6 +739,8 @@ class TerminalFragment : Fragment() {
         b.btnPgdn.isEnabled = enabled
         b.btnHome.isEnabled = enabled
         b.btnEnd.isEnabled = enabled
+        b.btnDel.isEnabled = enabled
+        b.btnEnter.isEnabled = enabled
         if (!enabled) {
             clearCtrlArmed()
         }

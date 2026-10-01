@@ -153,4 +153,12 @@
     <string name="terminal_actions_desc">会话状态与操作</string>
     <string name="terminal_actions_status_desc">%1$s，%2$s，会话操作</string>
     <string name="terminal_tab_status_desc">%1$s，%2$s</string>
+    <string name="key_del">Del</string>
+    <string name="key_enter">Enter</string>
+    <string name="key_up_desc">方向上</string>
+    <string name="key_down_desc">方向下</string>
+    <string name="key_left_desc">方向左</string>
+    <string name="key_right_desc">方向右</string>
+    <string name="key_del_desc">向前删除</string>
+    <string name="key_enter_desc">回车</string>
 </resources>
