@@ -1,12 +1,16 @@
 package com.sshtool.ui.terminal
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
@@ -70,6 +74,17 @@ class TerminalFragment : Fragment() {
     private var entryHostJob: Job? = null
     private var isOpeningFileTransfer = false
     private var terminalMenuPopup: PopupMenu? = null
+    private var pressedDirectionButton: View? = null
+    private val keyRepeatHandler = Handler(Looper.getMainLooper())
+    private val keyRepeater = KeyRepeatController { delayMillis, task ->
+        val runnable = Runnable { task() }
+        keyRepeatHandler.postDelayed(runnable, delayMillis)
+        val cancel: () -> Unit = { keyRepeatHandler.removeCallbacks(runnable) }
+        cancel
+    }
+    private val windowFocusListener = ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
+        if (!hasFocus) keyRepeater.stop()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -103,6 +118,7 @@ class TerminalFragment : Fragment() {
         setupBackPressHandler()
         setupTabLayout()
         setupImeResizeListener()
+        binding.root.viewTreeObserver.addOnWindowFocusChangeListener(windowFocusListener)
         observeSessions()
 
         entryHostJob = viewLifecycleOwner.lifecycleScope.launch {
@@ -239,10 +255,10 @@ class TerminalFragment : Fragment() {
         binding.btnTab.setOnClickListener { sendRaw("\t") }
         binding.btnEsc.setOnClickListener { sendRaw("\u001B") }
         binding.btnPaste.setOnClickListener { pasteClipboard() }
-        binding.btnUp.setOnClickListener { sendTerminalKey(KeyEvent.KEYCODE_DPAD_UP) }
-        binding.btnDown.setOnClickListener { sendTerminalKey(KeyEvent.KEYCODE_DPAD_DOWN) }
-        binding.btnRight.setOnClickListener { sendTerminalKey(KeyEvent.KEYCODE_DPAD_RIGHT) }
-        binding.btnLeft.setOnClickListener { sendTerminalKey(KeyEvent.KEYCODE_DPAD_LEFT) }
+        setupRepeatingDirectionKey(binding.btnUp, KeyEvent.KEYCODE_DPAD_UP)
+        setupRepeatingDirectionKey(binding.btnDown, KeyEvent.KEYCODE_DPAD_DOWN)
+        setupRepeatingDirectionKey(binding.btnRight, KeyEvent.KEYCODE_DPAD_RIGHT)
+        setupRepeatingDirectionKey(binding.btnLeft, KeyEvent.KEYCODE_DPAD_LEFT)
         binding.btnPgup.setOnClickListener { sendTerminalKey(KeyEvent.KEYCODE_PAGE_UP) }
         binding.btnPgdn.setOnClickListener { sendTerminalKey(KeyEvent.KEYCODE_PAGE_DOWN) }
         binding.btnHome.setOnClickListener { sendTerminalKey(KeyEvent.KEYCODE_MOVE_HOME) }
@@ -252,12 +268,82 @@ class TerminalFragment : Fragment() {
         setTerminalInputEnabled(false)
     }
 
+    @SuppressLint("ClickableViewAccessibility") // Touch sends the first key via performClick().
+    private fun setupRepeatingDirectionKey(button: View, keyCode: Int) {
+        button.setOnClickListener { sendTerminalKey(keyCode) }
+        var pointerId = MotionEvent.INVALID_POINTER_ID
+        button.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    // Ignore other fingers/buttons until the original press ends.
+                    if (pressedDirectionButton == null && button.isEnabled) {
+                        val sessionId = attachedSessionId
+                        pressedDirectionButton = button
+                        pointerId = event.getPointerId(event.actionIndex)
+                        button.isPressed = true
+                        var firstKey = true
+                        keyRepeater.start(
+                            canSend = {
+                                val b = _binding
+                                sessionId != null && b != null && button.isEnabled &&
+                                    b.terminalView.isEnabled && !isLeavingScreen &&
+                                    !isOpeningFileTransfer && terminalMenuPopup == null &&
+                                    hostPickerDialog?.isShowing != true &&
+                                    hostKeyDialog?.isShowing != true &&
+                                    viewLifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) &&
+                                    attachedSessionId == sessionId &&
+                                    activeSession()?.let {
+                                        it.sessionId == sessionId &&
+                                            it.connectionState is SSHConnectionState.Connected
+                                    } == true
+                            },
+                            send = {
+                                if (firstKey) {
+                                    firstKey = false
+                                    button.performClick()
+                                } else {
+                                    sendTerminalKey(keyCode)
+                                }
+                            },
+                            onStopped = {
+                                button.isPressed = false
+                                pointerId = MotionEvent.INVALID_POINTER_ID
+                                if (pressedDirectionButton === button) pressedDirectionButton = null
+                            }
+                        )
+                    }
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (pressedDirectionButton === button) {
+                        val index = event.findPointerIndex(pointerId)
+                        if (index < 0 || event.getX(index) < 0 || event.getX(index) >= button.width ||
+                            event.getY(index) < 0 || event.getY(index) >= button.height) {
+                            keyRepeater.stop()
+                        }
+                    }
+                }
+                MotionEvent.ACTION_POINTER_UP -> {
+                    if (pressedDirectionButton === button &&
+                        event.getPointerId(event.actionIndex) == pointerId) {
+                        keyRepeater.stop()
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (pressedDirectionButton === button) keyRepeater.stop()
+                }
+            }
+            // Consuming UP avoids Button generating a second click after the DOWN click.
+            true
+        }
+    }
+
     private fun activeSession(): TerminalTabState? {
         val state = viewModel.uiState.value
         return state.sessions.firstOrNull { it.sessionId == state.activeSessionId }
     }
 
     private fun showTerminalMenu() {
+        keyRepeater.stop()
         terminalMenuPopup?.dismiss()
         val popup = PopupMenu(requireContext(), binding.btnMore)
         popup.inflate(R.menu.menu_terminal)
@@ -342,6 +428,7 @@ class TerminalFragment : Fragment() {
         binding.tabLayout.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
             override fun onTabSelected(tab: TabLayout.Tab) {
                 if (renderingTabs) return
+                keyRepeater.stop()
                 terminalMenuPopup?.dismiss()
                 val tag = tab.tag as? String ?: return
                 // Attach synchronously before publishing the new active id.
@@ -422,6 +509,7 @@ class TerminalFragment : Fragment() {
             return
         }
 
+        keyRepeater.stop()
         terminalMenuPopup?.dismiss()
         val previousSessionId = attachedSessionId
         if (previousSessionId != null) clearCtrlArmed()
@@ -580,6 +668,7 @@ class TerminalFragment : Fragment() {
     }
 
     private fun openFileTransfer() {
+        keyRepeater.stop()
         if (isOpeningFileTransfer) return
         val active = viewModel.uiState.value.sessions.firstOrNull {
             it.sessionId == viewModel.uiState.value.activeSessionId
@@ -599,6 +688,7 @@ class TerminalFragment : Fragment() {
     }
 
     private fun showHostPickerDialog() {
+        keyRepeater.stop()
         if (hostPickerJob?.isActive == true ||
             hostPickerLoading ||
             hostPickerDialog?.isShowing == true) return
@@ -657,6 +747,7 @@ class TerminalFragment : Fragment() {
     ) {
         val key = "$sessionId|new|${state.fingerprint}"
         if (hostKeyDialogKey == key && hostKeyDialog?.isShowing == true) return
+        keyRepeater.stop()
         dismissHostKeyDialog()
         hostKeyDialogKey = key
         hostKeyDialog = AlertDialog.Builder(requireContext())
@@ -685,6 +776,7 @@ class TerminalFragment : Fragment() {
     private fun showHostKeyDialog(sessionId: String, state: SSHConnectionState.HostKeyChanged) {
         val key = "$sessionId|changed|${state.fingerprint}"
         if (hostKeyDialogKey == key && hostKeyDialog?.isShowing == true) return
+        keyRepeater.stop()
         dismissHostKeyDialog()
         hostKeyDialogKey = key
         hostKeyDialog = AlertDialog.Builder(requireContext())
@@ -742,6 +834,7 @@ class TerminalFragment : Fragment() {
         b.btnDel.isEnabled = enabled
         b.btnEnter.isEnabled = enabled
         if (!enabled) {
+            keyRepeater.stop()
             clearCtrlArmed()
         }
     }
@@ -828,6 +921,7 @@ class TerminalFragment : Fragment() {
     }
 
     private fun leaveScreen() {
+        keyRepeater.stop()
         if (isLeavingScreen) return
         if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return
         val navController = findNavController()
@@ -850,14 +944,18 @@ class TerminalFragment : Fragment() {
     }
 
     override fun onPause() {
+        keyRepeater.stop()
         terminalMenuPopup?.dismiss()
         super.onPause()
     }
 
     override fun onDestroyView() {
+        keyRepeater.stop()
         terminalMenuPopup?.dismiss()
         terminalMenuPopup = null
         val b = _binding
+        b?.root?.viewTreeObserver?.takeIf { it.isAlive }
+            ?.removeOnWindowFocusChangeListener(windowFocusListener)
         b?.terminalView?.invalidateInputConnection()
         clearCtrlArmed()
         focusRunnable?.let { runnable -> b?.terminalView?.removeCallbacks(runnable) }
