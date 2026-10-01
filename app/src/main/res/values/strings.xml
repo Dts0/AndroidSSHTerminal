@@ -149,4 +149,8 @@
     <string name="about_version_code">构建版本号</string>
     <string name="about_git_sha">Git SHA</string>
     <string name="about_source_code">项目源码</string>
+    <string name="terminal_back_desc">返回主机列表</string>
+    <string name="terminal_actions_desc">会话状态与操作</string>
+    <string name="terminal_actions_status_desc">%1$s，%2$s，会话操作</string>
+    <string name="terminal_tab_status_desc">%1$s，%2$s</string>
 </resources>

@@ -12,6 +12,7 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.content.res.AppCompatResources
+import androidx.appcompat.widget.PopupMenu
 import androidx.core.view.ViewCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.Lifecycle
@@ -68,6 +69,7 @@ class TerminalFragment : Fragment() {
     private var focusRunnable: Runnable? = null
     private var entryHostJob: Job? = null
     private var isOpeningFileTransfer = false
+    private var terminalMenuPopup: PopupMenu? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -98,7 +100,6 @@ class TerminalFragment : Fragment() {
         setupToolbar()
         setupTerminalView()
         setupExtraKeys()
-        setupConnectionButtons()
         setupBackPressHandler()
         setupTabLayout()
         setupImeResizeListener()
@@ -152,8 +153,8 @@ class TerminalFragment : Fragment() {
     }
 
     private fun setupToolbar() {
-        binding.toolbar.setNavigationOnClickListener { leaveScreen() }
-        binding.toolbar.title = getString(R.string.app_name)
+        binding.btnBack.setOnClickListener { leaveScreen() }
+        binding.btnMore.setOnClickListener { showTerminalMenu() }
     }
 
     private fun setupTerminalView() {
@@ -246,15 +247,82 @@ class TerminalFragment : Fragment() {
         binding.btnPgdn.setOnClickListener { sendTerminalKey(KeyEvent.KEYCODE_PAGE_DOWN) }
         binding.btnHome.setOnClickListener { sendTerminalKey(KeyEvent.KEYCODE_MOVE_HOME) }
         binding.btnEnd.setOnClickListener { sendTerminalKey(KeyEvent.KEYCODE_MOVE_END) }
+        setTerminalInputEnabled(false)
     }
 
-    private fun setupConnectionButtons() {
-        binding.btnFileTransfer.setOnClickListener { openFileTransfer() }
-        binding.btnConnect.setOnClickListener {
-            viewModel.uiState.value.activeSessionId?.let(viewModel::reconnect)
+    private fun activeSession(): TerminalTabState? {
+        val state = viewModel.uiState.value
+        return state.sessions.firstOrNull { it.sessionId == state.activeSessionId }
+    }
+
+    private fun showTerminalMenu() {
+        terminalMenuPopup?.dismiss()
+        val popup = PopupMenu(requireContext(), binding.btnMore)
+        popup.inflate(R.menu.menu_terminal)
+        terminalMenuPopup = popup
+        updateTerminalMenu(activeSession())
+        popup.setOnMenuItemClickListener { item ->
+            // Recheck live state rather than trusting the state when the menu was opened.
+            val session = activeSession()
+            when (item.itemId) {
+                R.id.action_file_transfer -> openFileTransfer()
+                R.id.action_connect -> if (session != null && canReconnect(session)) {
+                    viewModel.reconnect(session.sessionId)
+                }
+                R.id.action_disconnect -> if (session != null && canDisconnect(session)) {
+                    viewModel.disconnect(session.sessionId)
+                }
+            }
+            true
         }
-        binding.btnDisconnect.setOnClickListener {
-            viewModel.uiState.value.activeSessionId?.let(viewModel::disconnect)
+        popup.setOnDismissListener {
+            if (terminalMenuPopup === popup) terminalMenuPopup = null
+        }
+        popup.show()
+    }
+
+    private fun canReconnect(session: TerminalTabState): Boolean =
+        session.connectionState is SSHConnectionState.Disconnected ||
+            session.connectionState is SSHConnectionState.Error
+
+    private fun canDisconnect(session: TerminalTabState): Boolean = !canReconnect(session)
+
+    private fun sessionStatusText(session: TerminalTabState): String =
+        when (val state = session.connectionState) {
+            SSHConnectionState.Connected -> connectedStatusText(session)
+            SSHConnectionState.Connecting -> getString(R.string.status_connecting)
+            SSHConnectionState.Disconnected -> getString(R.string.status_disconnected)
+            is SSHConnectionState.Error -> getString(R.string.status_error, state.message)
+            is SSHConnectionState.HostKeyConfirmationRequired -> getString(R.string.status_error, state.fingerprint)
+            is SSHConnectionState.HostKeyChanged -> getString(R.string.status_error, state.fingerprint)
+        }
+
+    private fun updateTerminalMenu(session: TerminalTabState?) {
+        val b = _binding ?: return
+        val status = session?.let(::sessionStatusText) ?: getString(R.string.status_disconnected)
+        b.btnMore.contentDescription = getString(
+            R.string.terminal_actions_status_desc,
+            session?.host?.name ?: getString(R.string.app_name), status
+        )
+        val menu = terminalMenuPopup?.menu ?: return
+        menu.findItem(R.id.terminal_status).title = status
+        menu.findItem(R.id.action_connect).isEnabled = session?.let(::canReconnect) == true
+        menu.findItem(R.id.action_disconnect).isEnabled = session?.let(::canDisconnect) == true
+        menu.findItem(R.id.action_file_transfer).apply {
+            isEnabled = session?.connectionState is SSHConnectionState.Connected
+            title = when (val transfer = session?.fileTransferState) {
+                is FileTransferState.Running -> {
+                    val total = transfer.totalBytes
+                    if (total != null && total > 0) {
+                        val percent = ((transfer.transferredBytes.toDouble() / total) * 100)
+                            .toInt().coerceIn(0, 100)
+                        "${getString(R.string.action_file_transfer)} $percent%"
+                    } else {
+                        "${getString(R.string.action_file_transfer)}…"
+                    }
+                }
+                else -> getString(R.string.action_file_transfer)
+            }
         }
     }
 
@@ -272,6 +340,7 @@ class TerminalFragment : Fragment() {
         binding.tabLayout.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
             override fun onTabSelected(tab: TabLayout.Tab) {
                 if (renderingTabs) return
+                terminalMenuPopup?.dismiss()
                 val tag = tab.tag as? String ?: return
                 // Attach synchronously before publishing the new active id.
                 // Otherwise a physical-key or late IME callback delivered
@@ -323,16 +392,12 @@ class TerminalFragment : Fragment() {
             lastRenderedActiveSessionId = null
             lastRenderedConnectionState = null
             setTerminalInputEnabled(false)
-            b.toolbar.title = getString(R.string.app_name)
-            b.tvStatus.text = getString(R.string.status_disconnected)
-            b.btnFileTransfer.isEnabled = false
-            b.btnFileTransfer.text = getString(R.string.action_file_transfer)
+            updateTerminalMenu(null)
             return
         }
 
         selectTab(active.sessionId)
         attachTerminalSession(active)
-        b.toolbar.title = active.host.name
         updateTabIndicators(state.sessions)
         val shouldActivateConnected =
             lastRenderedActiveSessionId != active.sessionId ||
@@ -355,6 +420,7 @@ class TerminalFragment : Fragment() {
             return
         }
 
+        terminalMenuPopup?.dismiss()
         val previousSessionId = attachedSessionId
         if (previousSessionId != null) clearCtrlArmed()
         attachedSessionId = session.sessionId
@@ -447,6 +513,9 @@ class TerminalFragment : Fragment() {
                 is SSHConnectionState.HostKeyChanged -> R.drawable.status_error
             }
             tab.icon = AppCompatResources.getDrawable(requireContext(), drawableRes)
+            tab.contentDescription = getString(
+                R.string.terminal_tab_status_desc, tab.text, sessionStatusText(session)
+            )
         }
     }
 
@@ -454,23 +523,9 @@ class TerminalFragment : Fragment() {
         session: TerminalTabState,
         shouldActivateConnected: Boolean
     ) {
-        val b = _binding ?: return
+        if (_binding == null) return
         val state = session.connectionState
-        b.btnFileTransfer.isEnabled = state is SSHConnectionState.Connected
-        b.btnFileTransfer.text = when (val transfer = session.fileTransferState) {
-            is FileTransferState.Running -> {
-                val total = transfer.totalBytes
-                if (total != null && total > 0) {
-                    val percent = ((transfer.transferredBytes.toDouble() / total) * 100)
-                        .toInt()
-                        .coerceIn(0, 100)
-                    "${getString(R.string.action_file_transfer)} $percent%"
-                } else {
-                    "${getString(R.string.action_file_transfer)}…"
-                }
-            }
-            else -> getString(R.string.action_file_transfer)
-        }
+        updateTerminalMenu(session)
         if (state !is SSHConnectionState.Error) lastErrorToastKey = null
         if (state !is SSHConnectionState.HostKeyConfirmationRequired &&
             state !is SSHConnectionState.HostKeyChanged) {
@@ -478,46 +533,21 @@ class TerminalFragment : Fragment() {
         }
         when (state) {
             SSHConnectionState.Connecting -> {
-                setToolbarVisible(true)
-                b.tvStatus.text = getString(R.string.status_connecting)
-                b.btnConnect.isEnabled = false
-                b.btnDisconnect.isEnabled = true
-                b.statusIndicator.setBackgroundResource(R.drawable.status_connecting)
                 setTerminalInputEnabled(false)
             }
             SSHConnectionState.Connected -> {
-                setToolbarVisible(false)
-                b.tvStatus.text = connectedStatusText(session)
-                b.btnConnect.isEnabled = false
-                b.btnDisconnect.isEnabled = true
-                b.statusIndicator.setBackgroundResource(R.drawable.status_connected)
                 setTerminalInputEnabled(true)
                 if (shouldActivateConnected) focusTerminalInput()
             }
             is SSHConnectionState.HostKeyConfirmationRequired -> {
-                setToolbarVisible(true)
-                b.tvStatus.text = getString(R.string.status_error, state.fingerprint)
-                b.btnConnect.isEnabled = false
-                b.btnDisconnect.isEnabled = true
-                b.statusIndicator.setBackgroundResource(R.drawable.status_error)
                 setTerminalInputEnabled(false)
                 showHostKeyDialog(session.sessionId, state)
             }
             is SSHConnectionState.HostKeyChanged -> {
-                setToolbarVisible(true)
-                b.tvStatus.text = getString(R.string.status_error, state.fingerprint)
-                b.btnConnect.isEnabled = false
-                b.btnDisconnect.isEnabled = true
-                b.statusIndicator.setBackgroundResource(R.drawable.status_error)
                 setTerminalInputEnabled(false)
                 showHostKeyDialog(session.sessionId, state)
             }
             is SSHConnectionState.Error -> {
-                setToolbarVisible(true)
-                b.tvStatus.text = getString(R.string.status_error, state.message)
-                b.btnConnect.isEnabled = true
-                b.btnDisconnect.isEnabled = false
-                b.statusIndicator.setBackgroundResource(R.drawable.status_error)
                 setTerminalInputEnabled(false)
                 val key = "${session.sessionId}|${state.message}"
                 if (lastErrorToastKey != key) {
@@ -526,11 +556,6 @@ class TerminalFragment : Fragment() {
                 }
             }
             SSHConnectionState.Disconnected -> {
-                setToolbarVisible(true)
-                b.tvStatus.text = getString(R.string.status_disconnected)
-                b.btnConnect.isEnabled = true
-                b.btnDisconnect.isEnabled = false
-                b.statusIndicator.setBackgroundResource(R.drawable.status_disconnected)
                 setTerminalInputEnabled(false)
             }
         }
@@ -695,10 +720,6 @@ class TerminalFragment : Fragment() {
         hostKeyDialogKey = null
     }
 
-    private fun setToolbarVisible(visible: Boolean) {
-        _binding?.toolbar?.visibility = if (visible) View.VISIBLE else View.GONE
-    }
-
     private fun setTerminalInputEnabled(enabled: Boolean) {
         val b = _binding ?: return
         b.terminalView.isEnabled = enabled
@@ -716,7 +737,9 @@ class TerminalFragment : Fragment() {
         b.btnPgdn.isEnabled = enabled
         b.btnHome.isEnabled = enabled
         b.btnEnd.isEnabled = enabled
-        if (!enabled) clearCtrlArmed()
+        if (!enabled) {
+            clearCtrlArmed()
+        }
     }
 
     private fun sendRaw(raw: String) {
@@ -822,7 +845,14 @@ class TerminalFragment : Fragment() {
         }
     }
 
+    override fun onPause() {
+        terminalMenuPopup?.dismiss()
+        super.onPause()
+    }
+
     override fun onDestroyView() {
+        terminalMenuPopup?.dismiss()
+        terminalMenuPopup = null
         val b = _binding
         b?.terminalView?.invalidateInputConnection()
         clearCtrlArmed()

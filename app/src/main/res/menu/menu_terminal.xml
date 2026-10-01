@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@+id/terminal_status" android:enabled="false" android:title="@string/status_disconnected" />
+    <item android:id="@+id/action_file_transfer" android:title="@string/action_file_transfer" />
+    <item android:id="@+id/action_connect" android:title="@string/action_connect" />
+    <item android:id="@+id/action_disconnect" android:title="@string/action_disconnect" />
+</menu>
