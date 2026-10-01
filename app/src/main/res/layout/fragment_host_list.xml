@@ -22,19 +22,18 @@
                 app:titleTextColor="?attr/colorOnPrimary"
                 android:background="?attr/colorPrimary" />
 
-            <TextView
-                android:id="@+id/btn_about"
+            <androidx.appcompat.widget.AppCompatImageButton
+                android:id="@+id/btn_more"
                 android:layout_width="48dp"
                 android:layout_height="match_parent"
                 android:layout_gravity="end"
-                android:gravity="center"
-                android:text="⋯"
-                android:textColor="?attr/colorOnPrimary"
-                android:textSize="24sp"
+                android:padding="12dp"
+                android:src="@drawable/ic_more_vert"
+                app:tint="?attr/colorOnPrimary"
                 android:clickable="true"
                 android:focusable="true"
                 android:background="?attr/selectableItemBackgroundBorderless"
-                android:contentDescription="@string/about_title" />
+                android:contentDescription="@string/main_menu_desc" />
 
         </FrameLayout>
 

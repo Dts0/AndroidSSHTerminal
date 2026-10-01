@@ -35,7 +35,7 @@ class HostListFragment : Fragment() {
     
     private lateinit var adapter: HostListAdapter
     private var deleteDialog: AlertDialog? = null
-    private var aboutMenu: PopupMenu? = null
+    private var overflowMenu: PopupMenu? = null
 
     /**
      * Guards against double-tap navigation: Android can deliver two onClick
@@ -91,13 +91,17 @@ class HostListFragment : Fragment() {
     }
     
     private fun setupMenu() {
-        binding.btnAbout.setOnClickListener { anchor ->
-            if (isNavigating || aboutMenu != null) return@setOnClickListener
+        binding.btnMore.setOnClickListener { anchor ->
+            if (isNavigating || overflowMenu != null) return@setOnClickListener
             val popup = PopupMenu(requireContext(), anchor)
-            aboutMenu = popup
+            overflowMenu = popup
             popup.menuInflater.inflate(R.menu.menu_host_list, popup.menu)
             popup.setOnMenuItemClickListener { item ->
                 when (item.itemId) {
+                    R.id.action_settings -> {
+                        navigateOnce(HostListFragmentDirections.actionHostListToSettings())
+                        true
+                    }
                     R.id.action_about -> {
                         navigateOnce(
                             HostListFragmentDirections.actionHostListToAbout()
@@ -108,7 +112,7 @@ class HostListFragment : Fragment() {
                 }
             }
             popup.setOnDismissListener {
-                if (aboutMenu === popup) aboutMenu = null
+                if (overflowMenu === popup) overflowMenu = null
             }
             popup.show()
         }
@@ -205,8 +209,8 @@ class HostListFragment : Fragment() {
     override fun onDestroyView() {
         deleteDialog?.dismiss()
         deleteDialog = null
-        aboutMenu?.dismiss()
-        aboutMenu = null
+        overflowMenu?.dismiss()
+        overflowMenu = null
         binding.recyclerView.adapter = null
         _binding = null
         super.onDestroyView()
