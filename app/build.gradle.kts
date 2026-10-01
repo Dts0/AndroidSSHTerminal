@@ -26,8 +26,8 @@ android {
         applicationId = "com.sshtool"
         minSdk = 26
         targetSdk = 34
-        versionCode = 5
-        versionName = "1.1.2"
+        versionCode = 6
+        versionName = "1.1.3"
 
         // Keep dependency translations within our supported languages. Include the
         // legacy zh qualifier as well as scripts for AndroidX regional resources.
