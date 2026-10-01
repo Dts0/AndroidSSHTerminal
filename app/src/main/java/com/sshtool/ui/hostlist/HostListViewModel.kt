@@ -1,8 +1,10 @@
 package com.sshtool.ui.hostlist
 
 import androidx.lifecycle.*
+import com.sshtool.R
 import com.sshtool.data.model.Host
 import com.sshtool.data.repository.HostRepository
+import com.sshtool.util.UserMessage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -43,7 +45,7 @@ class HostListViewModel(private val repository: HostRepository) : ViewModel() {
                 // A buffered channel retains the one-shot event while the view
                 // is temporarily STOPPED (for example during rotation) without
                 // replaying an already-consumed error on every recreation.
-                _events.send(HostListEvent.DeleteFailed(e.message))
+                _events.send(HostListEvent.DeleteFailed(UserMessage.fromThrowable(e, R.string.error_delete_host)))
             } finally {
                 deletingHostIds.remove(host.id)
             }
@@ -52,7 +54,7 @@ class HostListViewModel(private val repository: HostRepository) : ViewModel() {
 }
 
 sealed interface HostListEvent {
-    data class DeleteFailed(val message: String?) : HostListEvent
+    data class DeleteFailed(val message: UserMessage) : HostListEvent
 }
 
 class HostListViewModelFactory(

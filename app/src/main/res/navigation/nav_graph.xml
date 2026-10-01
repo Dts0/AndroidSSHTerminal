@@ -8,7 +8,7 @@
     <fragment
         android:id="@+id/hostListFragment"
         android:name="com.sshtool.ui.hostlist.HostListFragment"
-        android:label="SSH 主机"
+        android:label="@string/host_list_title"
         tools:layout="@layout/fragment_host_list">
         
         <action
@@ -27,7 +27,7 @@
     <fragment
         android:id="@+id/hostEditorFragment"
         android:name="com.sshtool.ui.editor.HostEditorFragment"
-        android:label="编辑主机"
+        android:label="@string/edit_host"
         tools:layout="@layout/fragment_host_editor">
         
         <argument
@@ -39,7 +39,7 @@
     <fragment
         android:id="@+id/terminalFragment"
         android:name="com.sshtool.ui.terminal.TerminalFragment"
-        android:label="终端"
+        android:label="@string/terminal_title"
         tools:layout="@layout/fragment_terminal">
         
         <argument
@@ -66,7 +66,7 @@
     <fragment
         android:id="@+id/aboutFragment"
         android:name="com.sshtool.ui.about.AboutFragment"
-        android:label="关于"
+        android:label="@string/about_title"
         tools:layout="@layout/fragment_about" />
 
 </navigation>

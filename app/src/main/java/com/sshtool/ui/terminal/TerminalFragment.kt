@@ -33,6 +33,8 @@ import com.sshtool.ssh.FileTransferState
 import com.sshtool.ssh.PortForwardStatus
 import com.sshtool.ssh.SSHConnectionState
 import com.sshtool.ui.MainActivity
+import com.sshtool.util.UserMessage
+import com.sshtool.util.resolveMessage
 import com.termux.terminal.KeyHandler
 import com.termux.terminal.TerminalSession
 import com.termux.view.TerminalViewClient
@@ -380,7 +382,7 @@ class TerminalFragment : Fragment() {
             SSHConnectionState.Connected -> connectedStatusText(session)
             SSHConnectionState.Connecting -> getString(R.string.status_connecting)
             SSHConnectionState.Disconnected -> getString(R.string.status_disconnected)
-            is SSHConnectionState.Error -> getString(R.string.status_error, state.message)
+            is SSHConnectionState.Error -> getString(R.string.status_error, connectionErrorText(state))
             is SSHConnectionState.HostKeyConfirmationRequired -> getString(R.string.status_error, state.fingerprint)
             is SSHConnectionState.HostKeyChanged -> getString(R.string.status_error, state.fingerprint)
         }
@@ -639,10 +641,10 @@ class TerminalFragment : Fragment() {
             }
             is SSHConnectionState.Error -> {
                 setTerminalInputEnabled(false)
-                val key = "${session.sessionId}|${state.message}"
+                val key = "${session.sessionId}|${state.userMessage ?: state.message}"
                 if (lastErrorToastKey != key) {
                     lastErrorToastKey = key
-                    Toast.makeText(requireContext(), state.message, Toast.LENGTH_LONG).show()
+                    Toast.makeText(requireContext(), connectionErrorText(state), Toast.LENGTH_LONG).show()
                 }
             }
             SSHConnectionState.Disconnected -> {
@@ -659,11 +661,11 @@ class TerminalFragment : Fragment() {
                 it.status == PortForwardStatus.PENDING || it.status == PortForwardStatus.STARTING
             }
             val failed = session.portForwardStates.count { it.status == PortForwardStatus.FAILED }
-            parts += "映射 $active/${session.portForwardStates.size}"
-            if (starting > 0) parts += "$starting 条启动中"
-            if (failed > 0) parts += "$failed 条失败"
+            parts += getString(R.string.terminal_forward_active, active, session.portForwardStates.size)
+            if (starting > 0) parts += getString(R.string.terminal_forward_starting, starting)
+            if (failed > 0) parts += getString(R.string.terminal_forward_failed, failed)
         }
-        if (session.configurationStale) parts += "配置待重连"
+        if (session.configurationStale) parts += getString(R.string.terminal_configuration_stale)
         return parts.joinToString(" · ")
     }
 
@@ -698,12 +700,12 @@ class TerminalFragment : Fragment() {
                 val hosts = SSHToolApp.instance.hostRepository.getAllHosts().first()
                 if (_binding == null) return@launch
                 if (hosts.isEmpty()) {
-                    Toast.makeText(requireContext(), "没有可用的主机，请先添加", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(requireContext(), R.string.no_hosts_available, Toast.LENGTH_SHORT).show()
                     return@launch
                 }
                 val names = hosts.map { "${it.name}  (${it.host}:${it.port})" }.toTypedArray()
                 hostPickerDialog = AlertDialog.Builder(requireContext())
-                    .setTitle("选择主机")
+                    .setTitle(R.string.select_host)
                     .setItems(names) { _, which ->
                         hostPickerJob = viewLifecycleOwner.lifecycleScope.launch {
                             try {
@@ -734,10 +736,12 @@ class TerminalFragment : Fragment() {
         }
     }
 
+    private fun connectionErrorText(state: SSHConnectionState.Error): String =
+        state.userMessage?.let { requireContext().resolveMessage(it) } ?: state.message
+
     private fun showHostLoadFailure(error: Exception) {
         val ctx = context ?: return
-        val detail = error.localizedMessage?.takeIf(String::isNotBlank)
-        val message = detail?.let { "无法加载主机：$it" } ?: "无法加载主机"
+        val message = ctx.resolveMessage(UserMessage.fromThrowable(error, R.string.error_load_host))
         Toast.makeText(ctx, message, Toast.LENGTH_LONG).show()
     }
 
@@ -869,7 +873,7 @@ class TerminalFragment : Fragment() {
         }.onFailure {
             android.util.Log.w("TerminalFragment", "Unable to read clipboard")
             context?.let { ctx ->
-                Toast.makeText(ctx, it.message ?: "无法读取剪贴板", Toast.LENGTH_SHORT).show()
+                Toast.makeText(ctx, ctx.resolveMessage(UserMessage.fromThrowable(it, R.string.error_clipboard)), Toast.LENGTH_SHORT).show()
             }
         }
     }

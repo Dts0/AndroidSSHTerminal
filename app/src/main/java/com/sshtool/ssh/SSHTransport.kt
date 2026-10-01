@@ -1,12 +1,15 @@
 package com.sshtool.ssh
 
-import com.sshtool.data.repository.ConnectionProfile
+import com.sshtool.R
 import com.sshtool.data.model.PortForwardRule
-import kotlinx.coroutines.channels.Channel
+import com.sshtool.data.repository.ConnectionProfile
+import com.sshtool.util.UserMessage
+import com.sshtool.util.UserStateException
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.ArrayDeque
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.channels.Channel
 
 /**
  * The transport surface used by [SSHConnectionManager]. Keeping the registry
@@ -33,14 +36,14 @@ internal interface SSHTransport {
                 PortForwardRuntimeState(
                     rule = rule,
                     status = PortForwardStatus.FAILED,
-                    error = "当前 SSH transport 不支持端口映射"
+                    userMessage = UserMessage(R.string.error_forward_unsupported)
                 )
             )
         }
     }
 
     suspend fun listRemoteDirectory(path: String): RemoteDirectoryListing =
-        throw UnsupportedOperationException("当前 SSH transport 不支持 SFTP")
+        throw UserStateException(UserMessage(R.string.error_sftp_unsupported))
 
     suspend fun uploadFile(
         input: InputStream,
@@ -49,14 +52,14 @@ internal interface SSHTransport {
         overwriteExisting: Boolean,
         totalBytes: Long?,
         onProgress: (Long) -> Unit
-    ): Unit = throw UnsupportedOperationException("当前 SSH transport 不支持 SFTP")
+    ): Unit = throw UserStateException(UserMessage(R.string.error_sftp_unsupported))
 
     suspend fun downloadFile(
         remotePath: String,
         output: OutputStream,
         totalBytes: Long?,
         onProgress: (Long) -> Unit
-    ): Unit = throw UnsupportedOperationException("当前 SSH transport 不支持 SFTP")
+    ): Unit = throw UserStateException(UserMessage(R.string.error_sftp_unsupported))
 
     fun cancelFileTransfer() = Unit
     fun destroy()

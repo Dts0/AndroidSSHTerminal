@@ -4,6 +4,10 @@ import android.content.Context
 import com.jcraft.jsch.HostKey
 import com.jcraft.jsch.HostKeyRepository
 import com.jcraft.jsch.JSch
+import com.sshtool.R
+import com.sshtool.util.UserIOException
+import com.sshtool.util.UserMessage
+import com.sshtool.util.UserStateException
 import java.io.File
 import java.io.IOException
 import java.nio.file.AtomicMoveNotSupportedException
@@ -86,7 +90,7 @@ internal class DelegateLegacyHostKeyRepository(
         delegate.add(HostKey(hashKnownHost(repositoryHost), key), null)
         val check = inspect(repositoryHost, key)
         if (!check.exactKeyMatches || check.hasConflictingExactKey) {
-            throw IllegalStateException("known_hosts 同步失败")
+            throw UserStateException(UserMessage(R.string.error_known_hosts_sync))
         }
     }
 }
@@ -116,7 +120,7 @@ internal class KnownHostsFileStore(private val file: File) : LegacyHostKeyReposi
             commit(retained) { candidate ->
                 val check = inspectRepository(loadRepository(candidate), repositoryHost, key)
                 if (!check.exactKeyMatches || check.hasConflictingExactKey) {
-                    throw IOException("known_hosts 同步校验失败")
+                    throw UserIOException(UserMessage(R.string.error_known_hosts_verify))
                 }
             }
         }
@@ -140,7 +144,7 @@ internal class KnownHostsFileStore(private val file: File) : LegacyHostKeyReposi
                 val exact = loadRepository(candidate).hostKey.any {
                     hostKeyMatches(it, repositoryHost)
                 }
-                if (exact) throw IOException("known_hosts 主机记录删除失败")
+                if (exact) throw UserIOException(UserMessage(R.string.error_known_hosts_remove))
             }
         }
     }
@@ -160,7 +164,7 @@ internal class KnownHostsFileStore(private val file: File) : LegacyHostKeyReposi
                     .filter { hostKeyMatches(it, repositoryHost) }
                     .map { it.type to it.key }
                     .sortedWith(compareBy<Pair<String, String>> { it.first }.thenBy { it.second })
-                if (actual != expected) throw IOException("known_hosts 回滚校验失败")
+                if (actual != expected) throw UserIOException(UserMessage(R.string.error_known_hosts_rollback))
             }
         }
     }
@@ -171,7 +175,7 @@ internal class KnownHostsFileStore(private val file: File) : LegacyHostKeyReposi
     private fun commit(lines: List<String>, verify: (File) -> Unit) {
         val parent = absoluteFile.parentFile ?: File(".").absoluteFile
         if (!parent.exists() && !parent.mkdirs()) {
-            throw IOException("无法创建 known_hosts 目录")
+            throw UserIOException(UserMessage(R.string.error_known_hosts_directory))
         }
         val staging = Files.createTempFile(
             parent.toPath(),

@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.sshtool.R
 import com.sshtool.data.model.Host
 import com.sshtool.data.repository.HostRepository
 import com.sshtool.ssh.FileTransferDirection
@@ -15,7 +16,12 @@ import com.sshtool.ssh.RemoteDirectoryListing
 import com.sshtool.ssh.SSHConnectionListener
 import com.sshtool.ssh.SSHConnectionManager
 import com.sshtool.ssh.SSHConnectionState
+import com.sshtool.util.UserArgumentException
+import com.sshtool.util.UserIOException
+import com.sshtool.util.UserMessage
 import com.termux.terminal.TerminalSession
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -29,12 +35,9 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.io.FileNotFoundException
-import java.util.UUID
-import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.withContext
 
 data class TerminalTabState(
     val sessionId: String,
@@ -370,7 +373,7 @@ class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
                 if (sessions[sessionId] !== managed ||
                     managed.operationGeneration.get() != operationGeneration) return@launch
                 if (refreshed == null) {
-                    managed.connectionState = SSHConnectionState.Error("主机不存在")
+                    managed.connectionState = SSHConnectionState.Error(UserMessage(R.string.host_not_found))
                     publish()
                     manager.disconnect(sessionId)
                     return@launch
@@ -391,9 +394,8 @@ class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
             } catch (e: Exception) {
                 if (sessions[sessionId] === managed &&
                     managed.operationGeneration.get() == operationGeneration) {
-                    val detail = e.localizedMessage?.takeIf(String::isNotBlank)
                     managed.connectionState = SSHConnectionState.Error(
-                        detail?.let { "无法加载主机：$it" } ?: "无法加载主机"
+                        UserMessage.fromThrowable(e, R.string.error_load_host)
                     )
                     publish()
                     manager.disconnect(sessionId)
@@ -424,7 +426,7 @@ class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
         sessionId: String,
         path: String = "."
     ): RemoteDirectoryListing {
-        require(sessions.containsKey(sessionId)) { "终端会话已不可用" }
+        require(sessions.containsKey(sessionId)) { throw UserArgumentException(UserMessage(R.string.file_transfer_session_unavailable)) }
         return manager.listRemoteDirectory(sessionId, path)
     }
 
@@ -454,7 +456,7 @@ class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
                     val resolver = repositoryContext().contentResolver
                     val totalBytes = queryContentSize(source)
                     val input = resolver.openInputStream(source)
-                        ?: throw FileNotFoundException("无法打开所选文件")
+                        ?: throw UserIOException(UserMessage(R.string.error_open_document))
                     input.use {
                         manager.uploadFile(
                             sessionId = sessionId,
@@ -508,7 +510,7 @@ class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
                 withContext(Dispatchers.IO) {
                     val resolver = repositoryContext().contentResolver
                     val output = resolver.openOutputStream(destination, "w")
-                        ?: throw FileNotFoundException("无法创建本地文件")
+                        ?: throw UserIOException(UserMessage(R.string.error_create_document))
                     output.use {
                         manager.downloadFile(
                             sessionId = sessionId,
@@ -643,13 +645,13 @@ class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
             // File-provider messages may include a content URI or local file
             // name. Keep the durable UI state generic just like manager-side
             // SFTP failures.
-            val detail = "无法准备文件传输"
             transferStateOverrides[sessionId] = TransferStateOverride(
                 state = FileTransferState.Failed(
                     direction = direction,
                     remotePath = remotePath,
                     transferredBytes = 0,
-                    error = detail
+                    error = "Unable to prepare file transfer",
+                    userMessage = UserMessage(R.string.error_prepare_transfer)
                 ),
                 managerStateAtCreation = managerState
             )

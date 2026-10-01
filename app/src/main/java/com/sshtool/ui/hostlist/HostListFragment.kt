@@ -20,6 +20,7 @@ import com.sshtool.SSHToolApp
 import com.sshtool.data.model.Host
 import com.sshtool.databinding.FragmentHostListBinding
 import com.sshtool.ui.MainActivity
+import com.sshtool.util.resolveMessage
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -168,8 +169,7 @@ class HostListFragment : Fragment() {
     }
 
     private fun showDeleteFailure(event: HostListEvent.DeleteFailed) {
-        val detail = event.message?.takeIf { it.isNotBlank() }
-            ?: getString(R.string.confirm_delete_title)
+        val detail = requireContext().resolveMessage(event.message)
         Toast.makeText(
             requireContext(),
             getString(R.string.status_error, detail),

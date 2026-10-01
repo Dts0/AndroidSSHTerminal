@@ -10,11 +10,20 @@ import com.jcraft.jsch.JSchPtyResizeCompat
 import com.jcraft.jsch.Session
 import com.jcraft.jsch.SftpException
 import com.jcraft.jsch.SftpProgressMonitor
+import com.sshtool.R
 import com.sshtool.data.model.PortForwardDirection
 import com.sshtool.data.model.PortForwardRule
+import com.sshtool.util.UserArgumentException
+import com.sshtool.util.UserMessage
+import com.sshtool.util.UserStateException
+import java.io.File
+import java.io.InputStream
+import java.io.OutputStream
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -24,11 +33,6 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
-import java.io.InputStream
-import java.io.OutputStream
-import java.util.UUID
-import java.util.concurrent.atomic.AtomicBoolean
 
 sealed class SSHConnectionState {
     data object Connecting : SSHConnectionState()
@@ -45,7 +49,12 @@ sealed class SSHConnectionState {
         val algorithm: String,
         val fingerprint: String
     ) : SSHConnectionState()
-    data class Error(val message: String) : SSHConnectionState()
+    data class Error(
+        val message: String,
+        val userMessage: UserMessage? = null
+    ) : SSHConnectionState() {
+        constructor(message: UserMessage) : this("App error (${message.resourceId})", message)
+    }
     data object Disconnected : SSHConnectionState()
 }
 
@@ -250,7 +259,7 @@ internal class SSHConnection(
             closeTransport()
             closeCandidateTransport(candidateInput, candidateOutput, candidateChannel, candidateSession)
             if (!closed.get()) {
-                listener?.onStateChanged(SSHConnectionState.Error(e.message ?: "未知错误"))
+                listener?.onStateChanged(SSHConnectionState.Error(UserMessage.fromThrowable(e, R.string.error_unknown)))
             }
         }
     }
@@ -268,7 +277,7 @@ internal class SSHConnection(
                 )
             }
         } else {
-            SSHConnectionState.Error(error.message ?: "连接失败")
+            SSHConnectionState.Error(UserMessage.fromThrowable(error, R.string.error_connection))
         }
         listener?.onStateChanged(state)
     }
@@ -298,7 +307,7 @@ internal class SSHConnection(
             } catch (_: Exception) {
                 if (!closed.get()) {
                     Log.w(LOG_TAG, "SSH writer ended")
-                    listener?.onStateChanged(SSHConnectionState.Error("发送失败"))
+                    listener?.onStateChanged(SSHConnectionState.Error(UserMessage(R.string.error_send)))
                     disconnectInternal(notifyState = false)
                 }
             }
@@ -347,7 +356,7 @@ internal class SSHConnection(
                     PortForwardRuntimeState(
                         rule,
                         PortForwardStatus.FAILED,
-                        error = "SSH 连接已断开"
+                        userMessage = UserMessage(R.string.error_ssh_disconnected)
                     )
                 )
                 return@forEach
@@ -384,7 +393,7 @@ internal class SSHConnection(
                 }
                 if (!retained) {
                     removePortForward(sshSession, installed)
-                    throw JSchException("SSH 连接已断开")
+                    throw UserStateException(UserMessage(R.string.error_ssh_disconnected))
                 }
                 onStateChanged(
                     PortForwardRuntimeState(
@@ -409,7 +418,7 @@ internal class SSHConnection(
                     PortForwardRuntimeState(
                         rule = rule,
                         status = PortForwardStatus.FAILED,
-                        error = forwardingError(failure)
+                        userMessage = UserMessage.fromThrowable(failure, R.string.error_forward_start)
                     )
                 )
             }
@@ -447,7 +456,7 @@ internal class SSHConnection(
                 ChannelSftp.LsEntrySelector.CONTINUE
             }
             if (exceededLimit) {
-                throw IllegalStateException("远程目录项目过多（最多 $MAX_DIRECTORY_ENTRIES 项）")
+                throw UserStateException(UserMessage(R.string.error_remote_directory_limit, MAX_DIRECTORY_ENTRIES))
             }
             RemoteDirectoryListing(
                 path = canonicalPath,
@@ -502,7 +511,7 @@ internal class SSHConnection(
             }
             if (!commitProtected) {
                 context.ensureActive()
-                throw IllegalStateException("SFTP 连接已断开")
+                throw UserStateException(UserMessage(R.string.error_sftp_disconnected))
             }
             // UI performs overwrite confirmation. Preserve the old file until
             // the complete temporary upload is present, and retain a backup
@@ -510,10 +519,10 @@ internal class SSHConnection(
             val existingTarget = remotePathAttributesOrNull(sftp, targetPath)
             if (existingTarget != null) {
                 if (!overwriteExisting) {
-                    throw IllegalStateException("远程目标已存在，需要确认覆盖")
+                    throw UserStateException(UserMessage(R.string.error_remote_exists))
                 }
                 require(existingTarget.isReg) {
-                    "仅允许覆盖远程普通文件"
+                    throw UserArgumentException(UserMessage(R.string.error_overwrite_regular_only))
                 }
                 backupPath = joinRemotePath(
                     canonicalDirectory,
@@ -526,7 +535,7 @@ internal class SSHConnection(
                 // directory or symlink with the uploaded file.
                 val movedTarget = sftp.lstat(backupPath)
                 require(movedTarget.isReg && !movedTarget.isLink) {
-                    "仅允许覆盖远程普通文件"
+                    throw UserArgumentException(UserMessage(R.string.error_overwrite_regular_only))
                 }
             }
             sftp.rename(temporaryPath, targetPath)
@@ -573,9 +582,9 @@ internal class SSHConnection(
         // lstat the caller-selected entry before realpath so a symlink cannot
         // be resolved first and thereby bypass the first-version restriction.
         val attrs = sftp.lstat(remotePath)
-        require(!attrs.isDir) { "不能将远程目录作为单个文件下载" }
-        require(!attrs.isLink) { "第一版不支持下载符号链接" }
-        require(attrs.isReg) { "仅支持下载远程普通文件" }
+        require(!attrs.isDir) { throw UserArgumentException(UserMessage(R.string.error_download_directory)) }
+        require(!attrs.isLink) { throw UserArgumentException(UserMessage(R.string.file_transfer_symlink_unsupported)) }
+        require(attrs.isReg) { throw UserArgumentException(UserMessage(R.string.error_download_regular_only)) }
         val canonicalPath = sftp.realpath(remotePath)
         val expectedBytes = totalBytes ?: attrs.size.takeIf { it >= 0 }
         val context = currentCoroutineContext()
@@ -666,7 +675,7 @@ internal class SSHConnection(
         operationContext.ensureActive()
         val sshSession = synchronized(resourceLock) {
             session?.takeIf { !closed.get() && it.isConnected }
-        } ?: throw IllegalStateException("SSH 连接未就绪")
+        } ?: throw UserStateException(UserMessage(R.string.error_connection_not_ready))
 
         val sftp = sshSession.openChannel("sftp") as ChannelSftp
         val registered = synchronized(resourceLock) {
@@ -683,9 +692,9 @@ internal class SSHConnection(
         if (!registered) {
             runCatching { sftp.disconnect() }
             if (isTransfer && synchronized(resourceLock) { activeTransferChannel != null }) {
-                throw IllegalStateException("已有文件传输正在进行")
+                throw UserStateException(UserMessage(R.string.file_transfer_in_progress))
             }
-            throw IllegalStateException("SSH 连接已断开")
+            throw UserStateException(UserMessage(R.string.error_ssh_disconnected))
         }
 
         try {
@@ -734,10 +743,10 @@ internal class SSHConnection(
     }
 
     private fun validatePortForward(rule: PortForwardRule) {
-        require(rule.bindAddress.isNotBlank()) { "监听地址不能为空" }
-        require(rule.targetHost.isNotBlank()) { "目标地址不能为空" }
-        require(rule.listenPort in 1..65535) { "监听端口必须在 1..65535 之间" }
-        require(rule.targetPort in 1..65535) { "目标端口必须在 1..65535 之间" }
+        require(rule.bindAddress.isNotBlank()) { throw UserArgumentException(UserMessage(R.string.port_forward_bind_required)) }
+        require(rule.targetHost.isNotBlank()) { throw UserArgumentException(UserMessage(R.string.port_forward_target_required)) }
+        require(rule.listenPort in 1..65535) { throw UserArgumentException(UserMessage(R.string.port_forward_invalid_listen_port)) }
+        require(rule.targetPort in 1..65535) { throw UserArgumentException(UserMessage(R.string.port_forward_invalid_target_port)) }
     }
 
     private fun removePortForward(sshSession: Session, active: ActivePortForward) {
@@ -755,14 +764,11 @@ internal class SSHConnection(
         }.onFailure { Log.w(LOG_TAG, "remove port forward failed") }
     }
 
-    private fun forwardingError(failure: Throwable): String =
-        failure.message?.take(240)?.takeIf { it.isNotBlank() } ?: "端口映射启动失败"
-
     private fun requireValidRemoteFileName(fileName: String) {
         require(fileName.isNotBlank() && fileName != "." && fileName != "..") {
-            "远程文件名无效"
+            throw UserArgumentException(UserMessage(R.string.error_remote_filename))
         }
-        require('/' !in fileName && '\u0000' !in fileName) { "远程文件名不能包含路径分隔符" }
+        require('/' !in fileName && '\u0000' !in fileName) { throw UserArgumentException(UserMessage(R.string.error_remote_filename_separator)) }
     }
 
     private fun joinRemotePath(directory: String, name: String): String =

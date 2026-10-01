@@ -29,6 +29,10 @@ android {
         versionCode = 5
         versionName = "1.1.2"
 
+        // Keep dependency translations within our supported languages. Include the
+        // legacy zh qualifier as well as scripts for AndroidX regional resources.
+        resourceConfigurations += listOf("en", "ja", "zh", "b+zh+Hans", "b+zh+Hant")
+
         val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
         val buildTime = sdf.format(Date())
         val gitSha = providers.exec { commandLine("git", "rev-parse", "--short", "HEAD") }.standardOutput.asText.get().trim()

@@ -1,11 +1,13 @@
 package com.sshtool.ui.editor
 
 import androidx.lifecycle.*
+import com.sshtool.R
 import com.sshtool.data.model.Host
 import com.sshtool.data.model.PortForwardDirection
 import com.sshtool.data.model.PortForwardRule
 import com.sshtool.data.model.portForwardBindAddressesConflict as sharedBindAddressesConflict
 import com.sshtool.data.repository.HostRepository
+import com.sshtool.util.UserMessage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -110,7 +112,7 @@ class HostEditorViewModel(private val repository: HostRepository) : ViewModel() 
                 throw e
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(isLoading = false)
-                _events.send(HostEditorEvent.LoadFailed(e.message))
+                _events.send(HostEditorEvent.LoadFailed(UserMessage.fromThrowable(e, R.string.error_load_host)))
             }
         }
     }
@@ -311,7 +313,7 @@ class HostEditorViewModel(private val repository: HostRepository) : ViewModel() 
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                event = HostEditorEvent.SaveFailed(e.message)
+                event = HostEditorEvent.SaveFailed(UserMessage.fromThrowable(e, R.string.error_save_failed))
             } finally {
                 _uiState.value = _uiState.value.copy(isSaving = false)
             }
@@ -375,12 +377,12 @@ private fun HostEditorUiState.canEditPortForwardDraft(): Boolean =
 
 sealed interface HostEditorEvent {
     data object HostNotFound : HostEditorEvent
-    data class LoadFailed(val message: String?) : HostEditorEvent
+    data class LoadFailed(val message: UserMessage) : HostEditorEvent
     data class SaveSucceeded(
         val hostId: Long,
         val editingExisting: Boolean
     ) : HostEditorEvent
-    data class SaveFailed(val message: String?) : HostEditorEvent
+    data class SaveFailed(val message: UserMessage) : HostEditorEvent
 }
 
 class HostEditorViewModelFactory(

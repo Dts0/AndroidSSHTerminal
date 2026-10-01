@@ -16,14 +16,15 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import androidx.recyclerview.widget.LinearLayoutManager
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.sshtool.R
 import com.sshtool.SSHToolApp
 import com.sshtool.data.model.PortForwardDirection
 import com.sshtool.data.model.PortForwardRule
 import com.sshtool.databinding.DialogPortForwardRuleBinding
 import com.sshtool.databinding.FragmentHostEditorBinding
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.sshtool.ui.MainActivity
+import com.sshtool.util.resolveMessage
 import kotlinx.coroutines.launch
 
 class HostEditorFragment : Fragment() {
@@ -355,7 +356,7 @@ class HostEditorFragment : Fragment() {
                             is HostEditorEvent.LoadFailed -> {
                                 Toast.makeText(
                                     requireContext(),
-                                    event.message ?: getString(R.string.error_save_failed),
+                                    requireContext().resolveMessage(event.message),
                                     Toast.LENGTH_LONG
                                 ).show()
                                 leaveEditor()
@@ -376,7 +377,7 @@ class HostEditorFragment : Fragment() {
                             is HostEditorEvent.SaveFailed -> {
                                 Toast.makeText(
                                     requireContext(),
-                                    event.message ?: getString(R.string.error_save_failed),
+                                    requireContext().resolveMessage(event.message),
                                     Toast.LENGTH_LONG
                                 ).show()
                             }

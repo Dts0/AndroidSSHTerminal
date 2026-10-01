@@ -1,6 +1,7 @@
 package com.sshtool.ssh
 
 import com.sshtool.data.model.PortForwardRule
+import com.sshtool.util.UserMessage
 
 /** Observable state for one configured forwarding rule on one SSH session. */
 enum class PortForwardStatus {
@@ -15,7 +16,8 @@ data class PortForwardRuntimeState(
     val status: PortForwardStatus,
     /** The actual listening port. It currently equals the configured port. */
     val boundPort: Int? = null,
-    val error: String? = null
+    val error: String? = null,
+    val userMessage: UserMessage? = null
 )
 
 /** A remote SFTP entry. [path] is canonical and can be passed back to SFTP APIs. */
@@ -65,7 +67,8 @@ sealed interface FileTransferState {
         val remotePath: String,
         val transferredBytes: Long,
         val totalBytes: Long? = null,
-        val error: String
+        val error: String,
+        val userMessage: UserMessage? = null
     ) : FileTransferState
 
     data class Cancelled(

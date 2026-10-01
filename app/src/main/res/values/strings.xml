@@ -1,164 +1,217 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="app_name">SSH终端</string>
-    <string name="host_list_empty">暂无主机\n点击右下角 + 添加</string>
-    <string name="add_host">添加主机</string>
-    <string name="edit_host">编辑主机</string>
-    <string name="save">保存</string>
-    <string name="host_name">名称</string>
-    <string name="host_address">主机地址</string>
-    <string name="port">端口</string>
-    <string name="username">用户名</string>
-    <string name="auth_type">认证方式</string>
-    <string name="auth_password">🔒 密码</string>
-    <string name="auth_key">🔑 密钥</string>
-    <string name="password">密码</string>
-    <string name="password_optional_keep">密码（留空则保留原密码）</string>
-    <string name="private_key">私钥 (PEM 格式)</string>
-    <string name="private_key_optional_keep">私钥 (PEM 格式，留空则保留原私钥)</string>
-    <string name="passphrase_optional">密钥密码 (可选)</string>
-    <string name="passphrase_optional_keep">密钥密码 (可选，留空则保留原密码)</string>
-    <string name="add_host_desc">添加主机</string>
-    <string name="add_ssh_session_desc">新建 SSH 会话</string>
-    <string name="delete">删除</string>
-    <string name="confirm_delete_title">删除主机</string>
-    <string name="confirm_delete_message">确认删除“%1$s”吗？此操作会同时删除已保存的密码或私钥。</string>
-    <string name="confirm_delete_active_sessions_message">“%1$s”仍有活动终端或文件传输。继续将先关闭这些会话，再删除主机、端口映射和已保存的凭据。</string>
-    <string name="cancel">取消</string>
-    <string name="saved_successfully">保存成功</string>
-    <string name="error_save_failed">保存失败</string>
-    <string name="name_required">请输入名称</string>
-    <string name="host_required">请输入主机地址</string>
-    <string name="username_required">请输入用户名</string>
-    <string name="invalid_port">端口无效</string>
-    <string name="password_required">请输入密码</string>
-    <string name="private_key_required">请输入私钥</string>
-    <string name="host_not_found">主机不存在</string>
-    <string name="host_key_checking_enabled_notice">已启用主机密钥校验；首次连接需要确认主机指纹。</string>
-    <string name="host_key_confirm_title">确认主机指纹</string>
-    <string name="host_key_confirm_message">即将连接 %1$s:%2$d\n算法：%3$s\n指纹：%4$s\n\n请确认该指纹与服务器端一致后再继续。</string>
-    <string name="host_key_changed_title">⚠ 主机指纹已变更</string>
-    <string name="host_key_changed_message">%1$s:%2$d 返回的指纹与之前信任的指纹不一致！\n算法：%3$s\n新指纹：%4$s\n\n这可能是中间人攻击或服务器密钥已被更换。仅当你确认服务器确实更换了密钥时才应继续。</string>
-    <string name="trust_and_connect">信任并连接</string>
-    <string name="host_key_rejected">已取消连接，未信任该主机指纹。</string>
-    <string name="connection_success">=== 连接成功 ===</string>
-    <string name="connection_disconnected">=== 连接已断开 ===</string>
-    <string name="status_connecting_host">正在连接 %1$s…</string>
-    <string name="status_connecting">正在连接…</string>
-    <string name="status_connected">已连接</string>
-    <string name="status_disconnected">已断开</string>
-    <string name="status_connection_closed">连接已断开</string>
-    <string name="status_error">错误：%1$s</string>
-    <string name="action_connect">连接</string>
-    <string name="action_disconnect">断开</string>
-    <string name="action_file_transfer">文件</string>
-    <string name="file_transfer_title">文件传输</string>
-    <string name="file_transfer_remote_path">远程路径</string>
-    <string name="file_transfer_parent_directory">返回上级目录</string>
-    <string name="file_transfer_refresh">刷新远程目录</string>
-    <string name="file_transfer_upload">上传到当前目录</string>
-    <string name="file_transfer_empty">此目录为空</string>
-    <string name="file_transfer_loading">正在读取远程目录…</string>
-    <string name="file_transfer_load_failed">无法读取远程目录，请检查连接和目录权限后重试</string>
-    <string name="file_transfer_session_unavailable">终端会话已不可用</string>
-    <string name="file_transfer_connection_required">请先连接 SSH 会话</string>
-    <string name="file_transfer_uploading">正在上传 %1$s</string>
-    <string name="file_transfer_downloading">正在下载 %1$s</string>
-    <string name="file_transfer_preparing">正在准备传输…</string>
-    <string name="file_transfer_in_progress">当前会话已有文件正在传输</string>
-    <string name="file_transfer_progress_bytes">%1$s / %2$s</string>
-    <string name="file_transfer_progress_transferred">已传输 %1$s</string>
-    <string name="file_transfer_cancel">取消传输</string>
-    <string name="file_transfer_completed">文件传输完成</string>
-    <string name="file_transfer_cancelled">文件传输已取消</string>
-    <string name="file_transfer_failed">文件传输失败，请检查连接、文件权限和可用空间</string>
-    <string name="file_transfer_overwrite_title">覆盖远程文件？</string>
-    <string name="file_transfer_overwrite_message">“%1$s”已存在。继续上传将覆盖它。</string>
-    <string name="file_transfer_overwrite">覆盖</string>
-    <string name="file_transfer_invalid_name">无法获取有效的文件名</string>
-    <string name="file_transfer_overwrite_check_failed">无法确认远程文件是否存在，上传已取消</string>
-    <string name="file_transfer_download_request_expired">下载请求已失效，请重新选择文件</string>
-    <string name="file_transfer_incomplete_document_cleanup_failed">无法删除文件选择器创建的空文件，请手动删除</string>
-    <string name="file_transfer_symlink_unsupported">首个版本不支持跟随符号链接</string>
-    <string name="file_transfer_directory_limited">目录内容过多，仅显示前 %1$d 项</string>
-    <string name="file_transfer_folder">文件夹</string>
-    <string name="file_transfer_symbolic_link">符号链接</string>
-    <string name="file_transfer_file_size">%1$s · %2$s</string>
-    <string name="file_transfer_unknown_size">未知大小</string>
-    <string name="file_transfer_item_open">打开 %1$s</string>
-    <string name="file_transfer_choose_upload">选择要上传的文件</string>
-    <string name="delete_desc">删除</string>
-    <string name="never_connected">从未连接</string>
-    <string name="host_summary">%1$s@%2$s:%3$d</string>
-    <string name="default_ssh_port">22</string>
-    <string name="empty_state_emoji">📡</string>
-    <string name="input_placeholder">轻触此处调出键盘，输入将直接发送到 SSH</string>
-    <string name="key_ctrl">Ctrl</string>
-    <string name="key_tab">Tab</string>
-    <string name="key_esc">Esc</string>
-    <string name="key_up">↑</string>
-    <string name="key_down">↓</string>
-    <string name="key_left">←</string>
-    <string name="key_right">→</string>
-    <string name="key_pgup">PgUp</string>
-    <string name="key_pgdn">PgDn</string>
-    <string name="key_home">Home</string>
-    <string name="key_end">End</string>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <string name="app_name">SSHTerminal</string>
+    <string name="host_list_empty">No hosts yet\nTap + in the bottom right to add one</string>
+    <string name="add_host">Add host</string>
+    <string name="edit_host">Edit host</string>
+    <string name="save">Save</string>
+    <string name="host_name">Name</string>
+    <string name="host_address">Host address</string>
+    <string name="port">Port</string>
+    <string name="username">Username</string>
+    <string name="auth_type">Authentication</string>
+    <string name="auth_password">🔒 Password</string>
+    <string name="auth_key">🔑 Key</string>
+    <string name="password">Password</string>
+    <string name="password_optional_keep">Password (leave blank to keep the existing password)</string>
+    <string name="private_key">Private key (PEM format)</string>
+    <string name="private_key_optional_keep">Private key (PEM format; leave blank to keep the existing key)</string>
+    <string name="passphrase_optional">Key passphrase (optional)</string>
+    <string name="passphrase_optional_keep">Key passphrase (optional; leave blank to keep the existing passphrase)</string>
+    <string name="add_host_desc">Add host</string>
+    <string name="add_ssh_session_desc">New SSH session</string>
+    <string name="delete">Delete</string>
+    <string name="confirm_delete_title">Delete host</string>
+    <string name="confirm_delete_message">Delete “%1$s”? This also deletes its saved password or private key.</string>
+    <string name="confirm_delete_active_sessions_message">“%1$s” still has active terminals or file transfers. Continuing closes these sessions before deleting the host, port mappings, and saved credentials.</string>
+    <string name="cancel">Cancel</string>
+    <string name="saved_successfully">Saved</string>
+    <string name="error_save_failed">Unable to save</string>
+    <string name="name_required">Enter a name</string>
+    <string name="host_required">Enter a host address</string>
+    <string name="username_required">Enter a username</string>
+    <string name="invalid_port">Invalid port</string>
+    <string name="password_required">Enter a password</string>
+    <string name="private_key_required">Enter a private key</string>
+    <string name="host_not_found">Host not found</string>
+    <string name="host_key_checking_enabled_notice">Host key verification is enabled. Confirm the fingerprint on the first connection.</string>
+    <string name="host_key_confirm_title">Confirm host fingerprint</string>
+    <string name="host_key_confirm_message">Connecting to %1$s:%2$d\nAlgorithm: %3$s\nFingerprint: %4$s\n\nVerify that this fingerprint matches the server before continuing.</string>
+    <string name="host_key_changed_title">⚠ Host fingerprint changed</string>
+    <!-- %2$d below is a TCP port, not a count. -->
+    <string name="host_key_changed_message" tools:ignore="PluralsCandidate">The fingerprint returned by %1$s:%2$d differs from the one you trusted!\nAlgorithm: %3$s\nNew fingerprint: %4$s\n\nThis may indicate a man-in-the-middle attack or a replaced server key. Continue only if you have verified that the server key was changed intentionally.</string>
+    <string name="trust_and_connect">Trust and connect</string>
+    <string name="host_key_rejected">Connection cancelled. The host fingerprint was not trusted.</string>
+    <string name="connection_success">=== Connected ===</string>
+    <string name="connection_disconnected">=== Disconnected ===</string>
+    <string name="status_connecting_host">Connecting to %1$s…</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_connected">Connected</string>
+    <string name="status_disconnected">Disconnected</string>
+    <string name="status_connection_closed">Connection closed</string>
+    <string name="status_error">Error: %1$s</string>
+    <string name="action_connect">Connect</string>
+    <string name="action_disconnect">Disconnect</string>
+    <string name="action_file_transfer">Files</string>
+    <string name="file_transfer_title">File transfer</string>
+    <string name="file_transfer_remote_path">Remote path</string>
+    <string name="file_transfer_parent_directory">Parent directory</string>
+    <string name="file_transfer_refresh">Refresh remote directory</string>
+    <string name="file_transfer_upload">Upload to this directory</string>
+    <string name="file_transfer_empty">This directory is empty</string>
+    <string name="file_transfer_loading">Loading remote directory…</string>
+    <string name="file_transfer_load_failed">Unable to load the remote directory. Check the connection and directory permissions, then retry.</string>
+    <string name="file_transfer_session_unavailable">The terminal session is no longer available</string>
+    <string name="file_transfer_connection_required">Connect the SSH session first</string>
+    <string name="file_transfer_uploading">Uploading %1$s</string>
+    <string name="file_transfer_downloading">Downloading %1$s</string>
+    <string name="file_transfer_preparing">Preparing transfer…</string>
+    <string name="file_transfer_in_progress">A file transfer is already running in this session</string>
+    <string name="file_transfer_progress_bytes" translatable="false">%1$s / %2$s</string>
+    <string name="file_transfer_progress_transferred">Transferred %1$s</string>
+    <string name="file_transfer_cancel">Cancel transfer</string>
+    <string name="file_transfer_completed">File transfer completed</string>
+    <string name="file_transfer_cancelled">File transfer cancelled</string>
+    <string name="file_transfer_failed">File transfer failed. Check the connection, file permissions, and available space.</string>
+    <string name="file_transfer_overwrite_title">Overwrite remote file?</string>
+    <string name="file_transfer_overwrite_message">“%1$s” already exists. Continuing will overwrite it.</string>
+    <string name="file_transfer_overwrite">Overwrite</string>
+    <string name="file_transfer_invalid_name">Unable to get a valid filename</string>
+    <string name="file_transfer_overwrite_check_failed">Unable to check whether the remote file exists. Upload cancelled.</string>
+    <string name="file_transfer_download_request_expired">The download request has expired. Select the file again.</string>
+    <string name="file_transfer_incomplete_document_cleanup_failed">Unable to delete the empty file created by the file picker. Please delete it manually.</string>
+    <string name="file_transfer_symlink_unsupported">Following symbolic links is not supported in this version</string>
+    <string name="file_transfer_directory_limited">Too many entries. Showing only the first %1$d.</string>
+    <string name="file_transfer_folder">Folder</string>
+    <string name="file_transfer_symbolic_link">Symbolic link</string>
+    <string name="file_transfer_file_size" translatable="false">%1$s · %2$s</string>
+    <string name="file_transfer_unknown_size">Unknown size</string>
+    <string name="file_transfer_item_open">Open %1$s</string>
+    <string name="file_transfer_choose_upload">Choose a file to upload</string>
+    <string name="delete_desc">Delete</string>
+    <string name="never_connected">Never connected</string>
+    <string name="host_summary" translatable="false">%1$s@%2$s:%3$d</string>
+    <string name="default_ssh_port" translatable="false">22</string>
+    <string name="empty_state_emoji" translatable="false">📡</string>
+    <string name="input_placeholder">Tap here to show the keyboard; input is sent directly to SSH</string>
+    <string name="key_ctrl" translatable="false">Ctrl</string>
+    <string name="key_tab" translatable="false">Tab</string>
+    <string name="key_esc" translatable="false">Esc</string>
+    <string name="key_up" translatable="false">↑</string>
+    <string name="key_down" translatable="false">↓</string>
+    <string name="key_left" translatable="false">←</string>
+    <string name="key_right" translatable="false">→</string>
+    <string name="key_pgup" translatable="false">PgUp</string>
+    <string name="key_pgdn" translatable="false">PgDn</string>
+    <string name="key_home" translatable="false">Home</string>
+    <string name="key_end" translatable="false">End</string>
     <string name="key_paste">Paste</string>
-    <string name="send_rejected">%1$s：发送缓冲区已满，输入未发送；请稍后重试或缩小粘贴内容</string>
-    <string name="terminal_touch_to_input">轻触下方输入区开始输入；字符将直接发送到 SSH</string>
-
-    <!-- Port forwarding editor -->
-    <string name="advanced_settings">高级设置</string>
-    <string name="expand_advanced_settings">展开高级设置</string>
-    <string name="collapse_advanced_settings">收起高级设置</string>
-    <string name="port_forward_none">未配置端口映射</string>
-    <string name="port_forward_summary">端口映射：%1$d 条，%2$d 条已启用</string>
-    <string name="port_forward_auto_start_hint">已启用的映射会在下次连接或重连时自动启动。</string>
-    <string name="port_forward_empty">暂无端口映射规则</string>
-    <string name="add_port_forward">添加端口映射</string>
-    <string name="edit_port_forward">编辑</string>
-    <string name="port_forward_enabled">启用</string>
-    <string name="port_forward_local">本地映射</string>
-    <string name="port_forward_remote">远程映射</string>
-    <string name="port_forward_endpoint">%1$s:%2$d  →  %3$s:%4$d</string>
-    <string name="port_forward_add_title">添加端口映射</string>
-    <string name="port_forward_edit_title">编辑端口映射</string>
-    <string name="port_forward_direction">映射方向</string>
-    <string name="port_forward_local_hint">Android 端监听，连接将通过 SSH 服务器转发到目标。</string>
-    <string name="port_forward_remote_hint">SSH 服务器端监听，连接将转发到 Android 端可访问的目标。</string>
-    <string name="port_forward_bind_address">监听地址</string>
-    <string name="port_forward_bind_address_hint">推荐使用 127.0.0.1，仅允许本机访问</string>
-    <string name="port_forward_bind_warning">此监听地址可能将端口暴露给其他设备，请确认网络风险。</string>
-    <string name="port_forward_listen_port">监听端口</string>
-    <string name="port_forward_target_host">目标地址</string>
-    <string name="port_forward_target_port">目标端口</string>
-    <string name="port_forward_start_on_connect">连接时自动启用</string>
-    <string name="port_forward_bind_required">请输入监听地址</string>
-    <string name="port_forward_target_required">请输入目标地址</string>
-    <string name="port_forward_invalid_listen_port">监听端口必须在 1 到 65535 之间</string>
-    <string name="port_forward_invalid_target_port">目标端口必须在 1 到 65535 之间</string>
-    <string name="port_forward_duplicate">已存在同方向、同端口且监听范围冲突的规则</string>
-    <string name="port_forward_delete_title">删除端口映射</string>
-    <string name="port_forward_delete_message">确认删除这条端口映射规则吗？</string>
-
-    <!-- About -->
-    <string name="about_title">关于</string>
-    <string name="about_version_format">版本 %1$s</string>
-    <string name="about_build_time">构建时间</string>
-    <string name="about_version_code">构建版本号</string>
-    <string name="about_git_sha">Git SHA</string>
-    <string name="about_source_code">项目源码</string>
-    <string name="terminal_back_desc">返回主机列表</string>
-    <string name="terminal_actions_desc">会话状态与操作</string>
-    <string name="terminal_actions_status_desc">%1$s，%2$s，会话操作</string>
-    <string name="terminal_tab_status_desc">%1$s，%2$s</string>
-    <string name="key_del">Del</string>
-    <string name="key_enter">Enter</string>
-    <string name="key_up_desc">方向上</string>
-    <string name="key_down_desc">方向下</string>
-    <string name="key_left_desc">方向左</string>
-    <string name="key_right_desc">方向右</string>
-    <string name="key_del_desc">向前删除</string>
-    <string name="key_enter_desc">回车</string>
+    <string name="send_rejected">%1$s: the send buffer is full. Input was not sent; retry later or paste less text.</string>
+    <string name="terminal_touch_to_input">Tap the input area below to type; characters are sent directly to SSH</string>
+    <string name="advanced_settings">Advanced settings</string>
+    <string name="expand_advanced_settings">Expand advanced settings</string>
+    <string name="collapse_advanced_settings">Collapse advanced settings</string>
+    <string name="port_forward_none">No port mappings configured</string>
+    <string name="port_forward_summary">Port mappings: %1$d; enabled: %2$d</string>
+    <string name="port_forward_auto_start_hint">Enabled mappings start automatically on the next connection or reconnect.</string>
+    <string name="port_forward_empty">No port mapping rules yet</string>
+    <string name="add_port_forward">Add port mapping</string>
+    <string name="edit_port_forward">Edit</string>
+    <string name="port_forward_enabled">Enabled</string>
+    <string name="port_forward_local">Local forwarding</string>
+    <string name="port_forward_remote">Remote forwarding</string>
+    <string name="port_forward_endpoint" translatable="false">%1$s:%2$d  →  %3$s:%4$d</string>
+    <string name="port_forward_add_title">Add port mapping</string>
+    <string name="port_forward_edit_title">Edit port mapping</string>
+    <string name="port_forward_direction">Forwarding direction</string>
+    <string name="port_forward_local_hint">Listen on Android; forward connections to the destination through the SSH server.</string>
+    <string name="port_forward_remote_hint">Listen on the SSH server; forward connections to a destination reachable from Android.</string>
+    <string name="port_forward_bind_address">Listen address</string>
+    <string name="port_forward_bind_address_hint">Use 127.0.0.1 to allow only local access</string>
+    <string name="port_forward_bind_warning">This listen address may expose the port to other devices. Check the network risks.</string>
+    <string name="port_forward_listen_port">Listen port</string>
+    <string name="port_forward_target_host">Destination address</string>
+    <string name="port_forward_target_port">Destination port</string>
+    <string name="port_forward_start_on_connect">Enable automatically on connection</string>
+    <string name="port_forward_bind_required">Enter a listen address</string>
+    <string name="port_forward_target_required">Enter a destination address</string>
+    <string name="port_forward_invalid_listen_port">Listen port must be between 1 and 65535</string>
+    <string name="port_forward_invalid_target_port">Destination port must be between 1 and 65535</string>
+    <string name="port_forward_duplicate">A rule with the same direction, port, and overlapping listen address already exists</string>
+    <string name="port_forward_delete_title">Delete port mapping</string>
+    <string name="port_forward_delete_message">Delete this port mapping rule?</string>
+    <string name="about_title">About</string>
+    <string name="about_version_format">Version %1$s</string>
+    <string name="about_build_time">Build time</string>
+    <string name="about_version_code">Version code</string>
+    <string name="about_git_sha" translatable="false">Git SHA</string>
+    <string name="about_source_code">Source code</string>
+    <string name="terminal_back_desc">Back to host list</string>
+    <string name="terminal_actions_desc">Session status and actions</string>
+    <string name="terminal_actions_status_desc">%1$s, %2$s, session actions</string>
+    <string name="terminal_tab_status_desc">%1$s, %2$s</string>
+    <string name="key_del" translatable="false">Del</string>
+    <string name="key_enter" translatable="false">Enter</string>
+    <string name="key_up_desc">Up arrow</string>
+    <string name="key_down_desc">Down arrow</string>
+    <string name="key_left_desc">Left arrow</string>
+    <string name="key_right_desc">Right arrow</string>
+    <string name="key_del_desc">Forward delete</string>
+    <string name="key_enter_desc">Enter</string>
+    <string name="settings_title">Settings</string>
+    <string name="settings_language">Language</string>
+    <string name="language_auto">Auto (follow system)</string>
+    <string name="navigate_back">Back</string>
+    <string name="main_menu_desc">More options</string>
+    <string name="host_list_title">SSH hosts</string>
+    <string name="terminal_title">Terminal</string>
+    <string name="terminal_forward_active">Mappings %1$d/%2$d</string>
+    <string name="terminal_forward_starting">Starting: %1$d</string>
+    <string name="terminal_forward_failed">Failed: %1$d</string>
+    <string name="terminal_configuration_stale">Reconnect to apply changes</string>
+    <string name="no_hosts_available">No hosts available. Add a host first.</string>
+    <string name="select_host">Select a host</string>
+    <string name="error_with_detail">%1$s: %2$s</string>
+    <string name="error_load_host">Unable to load host</string>
+    <string name="error_clipboard">Unable to read clipboard</string>
+    <string name="error_delete_host">Unable to delete host</string>
+    <string name="error_credential_write">Unable to save credentials securely</string>
+    <string name="error_credential_store">Secure credential storage is unavailable. Check Android Keystore and retry.</string>
+    <string name="error_new_host_id">A new host cannot have an existing ID</string>
+    <string name="error_update_host">Unable to update host</string>
+    <string name="error_rollback_host">Unable to roll back host changes</string>
+    <string name="error_known_hosts_sync">Unable to synchronize known_hosts</string>
+    <string name="error_known_hosts_verify">Unable to verify known_hosts synchronization</string>
+    <string name="error_known_hosts_remove">Unable to remove the host from known_hosts</string>
+    <string name="error_known_hosts_rollback">Unable to verify known_hosts rollback</string>
+    <string name="error_known_hosts_directory">Unable to create the known_hosts directory</string>
+    <string name="error_unknown">Unknown error</string>
+    <string name="error_connection">Connection failed</string>
+    <string name="error_send">Unable to send input</string>
+    <string name="error_ssh_disconnected">SSH connection is closed</string>
+    <string name="error_remote_directory_limit">Too many directory entries (maximum %1$d)</string>
+    <string name="error_sftp_disconnected">SFTP connection is closed</string>
+    <string name="error_remote_exists">The remote destination exists. Confirm overwrite first.</string>
+    <string name="error_overwrite_regular_only">Only regular remote files can be overwritten</string>
+    <string name="error_read_credentials">Unable to read SSH credentials</string>
+    <string name="error_save_fingerprint">Unable to save host fingerprint</string>
+    <string name="error_file_name_required">Filename cannot be empty</string>
+    <string name="error_connection_cleanup">Unable to clean up SSH connection</string>
+    <string name="error_session_missing">SSH session not found</string>
+    <string name="error_connection_not_ready">SSH connection is not ready</string>
+    <string name="error_transfer_context">File transfers must run in a coroutine</string>
+    <string name="error_forward_unsupported">This SSH transport does not support port forwarding</string>
+    <string name="error_sftp_unsupported">This SSH transport does not support SFTP</string>
+    <string name="error_open_document">Unable to open the selected file</string>
+    <string name="error_create_document">Unable to create local file</string>
+    <string name="error_prepare_transfer">Unable to prepare file transfer</string>
+    <string name="error_download_regular_only">Only regular remote files can be downloaded</string>
+    <string name="error_download_directory">A remote directory cannot be downloaded as a single file</string>
+    <string name="error_forward_start">Unable to start port forwarding</string>
+    <string name="error_remote_filename">Invalid remote filename</string>
+    <string name="error_remote_filename_separator">A remote filename cannot contain path separators</string>
+    <string name="language_english" translatable="false">English</string>
+    <string name="language_simplified_chinese" translatable="false">简体中文</string>
+    <string name="language_traditional_chinese" translatable="false">繁體中文</string>
+    <string name="language_japanese" translatable="false">日本語</string>
 </resources>

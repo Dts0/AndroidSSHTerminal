@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.*
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.sshtool.R
 import com.sshtool.data.crypto.CredentialStore
 import com.sshtool.data.crypto.PasswordStore
 import com.sshtool.data.crypto.StoredCredentials
@@ -14,6 +15,9 @@ import com.sshtool.data.model.portForwardBindAddressesConflict
 import com.sshtool.ssh.HostKeyTrustStore
 import com.sshtool.ssh.HostTrustSnapshot
 import com.sshtool.ssh.HostTrustStore
+import com.sshtool.util.UserArgumentException
+import com.sshtool.util.UserMessage
+import com.sshtool.util.UserStateException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
@@ -270,7 +274,7 @@ class HostRepository {
                     // Creation must never overwrite an existing row. With REPLACE,
                     // a non-zero id could replace the old host and compensation
                     // would then delete the wrong revision.
-                    require(host.id == 0L) { "新增主机不能包含已有 ID" }
+                    require(host.id == 0L) { throw UserArgumentException(UserMessage(R.string.error_new_host_id)) }
                     validatePortForwardRules(portForwardRules)
                     passwordStore.requireAvailable()
                     val sanitizedHost = host.sanitizedForDatabase()
@@ -325,7 +329,7 @@ class HostRepository {
                 replacementRules?.let(::validatePortForwardRules)
                 passwordStore.requireAvailable()
                 val current = hostDao.getHostById(host.id)
-                    ?: throw IllegalArgumentException("主机不存在")
+                    ?: throw UserArgumentException(UserMessage(R.string.host_not_found))
                 val oldRules = replacementRules?.let {
                     portForwardRuleDao.getRulesForHost(host.id).snapshot()
                 }
@@ -355,7 +359,7 @@ class HostRepository {
                     databaseMutationAttempted = true
                     withDatabaseTransaction {
                         if (hostDao.updateHost(sanitizedUpdate) != 1) {
-                            throw IllegalStateException("主机更新失败")
+                            throw UserStateException(UserMessage(R.string.error_update_host))
                         }
                         if (replacementRules != null) {
                             portForwardRuleDao.deleteRulesForHost(host.id)
@@ -382,7 +386,7 @@ class HostRepository {
                         rollbackInto(failure) {
                             withDatabaseTransaction {
                                 if (hostDao.updateHost(current.sanitizedForDatabase()) != 1) {
-                                    throw IllegalStateException("无法回滚主机更新")
+                                    throw UserStateException(UserMessage(R.string.error_rollback_host))
                                 }
                                 if (oldRules != null) {
                                     portForwardRuleDao.deleteRulesForHost(host.id)
@@ -429,7 +433,7 @@ class HostRepository {
                     withDatabaseTransaction {
                         portForwardRuleDao.deleteRulesForHost(current.id)
                         if (hostDao.deleteHost(current.sanitizedForDatabase()) != 1) {
-                            throw IllegalStateException("主机删除失败")
+                            throw UserStateException(UserMessage(R.string.error_delete_host))
                         }
                     }
                 } catch (failure: Throwable) {
@@ -487,10 +491,10 @@ class HostRepository {
 
     private fun validatePortForwardRules(rules: List<PortForwardRule>) {
         rules.forEach { rule ->
-            require(rule.bindAddress.isNotBlank()) { "监听地址不能为空" }
-            require(rule.targetHost.isNotBlank()) { "目标地址不能为空" }
-            require(rule.listenPort in 1..65535) { "监听端口必须在 1 到 65535 之间" }
-            require(rule.targetPort in 1..65535) { "目标端口必须在 1 到 65535 之间" }
+            require(rule.bindAddress.isNotBlank()) { throw UserArgumentException(UserMessage(R.string.port_forward_bind_required)) }
+            require(rule.targetHost.isNotBlank()) { throw UserArgumentException(UserMessage(R.string.port_forward_target_required)) }
+            require(rule.listenPort in 1..65535) { throw UserArgumentException(UserMessage(R.string.port_forward_invalid_listen_port)) }
+            require(rule.targetPort in 1..65535) { throw UserArgumentException(UserMessage(R.string.port_forward_invalid_target_port)) }
         }
         rules.forEachIndexed { index, rule ->
             val conflictingRule = rules.subList(0, index).any { previous ->
@@ -502,7 +506,7 @@ class HostRepository {
                         rule.bindAddress
                     )
             }
-            require(!conflictingRule) { "存在重复的端口映射监听端点" }
+            require(!conflictingRule) { throw UserArgumentException(UserMessage(R.string.port_forward_duplicate)) }
         }
     }
 

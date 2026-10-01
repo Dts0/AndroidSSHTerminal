@@ -6,7 +6,10 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
-import java.io.IOException
+import com.sshtool.R
+import com.sshtool.util.UserIOException
+import com.sshtool.util.UserMessage
+import com.sshtool.util.UserStateException
 
 data class StoredCredentials(
     val password: String? = null,
@@ -166,7 +169,7 @@ class PasswordStore(context: Context) : CredentialStore {
         editor.putOrRemove("privateKey_$hostId", credentials.privateKey)
         editor.putOrRemove("passphrase_$hostId", credentials.passphrase)
         if (!editor.commit()) {
-            throw IOException("安全凭据写入失败")
+            throw UserIOException(UserMessage(R.string.error_credential_write))
         }
     }
 
@@ -175,7 +178,7 @@ class PasswordStore(context: Context) : CredentialStore {
         return try {
             currentPrefs.getString(key, null)
         } catch (e: Exception) {
-            throw IllegalStateException("安全凭据存储不可用，请检查 Android Keystore 状态后重试。", e)
+            throw UserStateException(UserMessage(R.string.error_credential_store), e)
         }
     }
 
@@ -184,5 +187,5 @@ class PasswordStore(context: Context) : CredentialStore {
     }
 
     private fun securePrefs(): SharedPreferences =
-        prefs ?: throw IllegalStateException("安全凭据存储不可用，请检查 Android Keystore 状态后重试。")
+        prefs ?: throw UserStateException(UserMessage(R.string.error_credential_store))
 }

@@ -1,10 +1,14 @@
 package com.sshtool.ssh
 
 import android.util.Log
+import com.sshtool.R
 import com.sshtool.SSHToolApp
 import com.sshtool.data.model.Host
 import com.sshtool.data.repository.ConnectionProfile
 import com.sshtool.data.repository.HostRepository
+import com.sshtool.util.UserArgumentException
+import com.sshtool.util.UserMessage
+import com.sshtool.util.UserStateException
 import java.io.InputStream
 import java.io.OutputStream
 import kotlinx.coroutines.CancellationException
@@ -122,7 +126,7 @@ class SSHConnectionManager internal constructor(
                         ?.listener
                 }
                 currentListener?.onStateChanged(
-                    SSHConnectionState.Error(e.message ?: "无法读取 SSH 凭据")
+                    SSHConnectionState.Error(UserMessage.fromThrowable(e, R.string.error_read_credentials))
                 )
                 return@launch
             }
@@ -164,7 +168,7 @@ class SSHConnectionManager internal constructor(
             } catch (_: Exception) {
                 clearPortForwardStatesIfCurrent(info, generation, connection)
                 currentListener(info, generation, connection)
-                    ?.onStateChanged(SSHConnectionState.Error("SSH 连接失败"))
+                    ?.onStateChanged(SSHConnectionState.Error(UserMessage(R.string.error_connection)))
                 return@launch
             }
             if (!connection.isConnected) {
@@ -242,7 +246,7 @@ class SSHConnectionManager internal constructor(
         // Resolve metadata and credentials under the repository's mutation
         // mutex. They live in two stores and must belong to the same revision.
         val profile = info.repository.getConnectionProfile(info.hostId)
-            ?: throw IllegalArgumentException("主机不存在")
+            ?: throw UserArgumentException(UserMessage(R.string.host_not_found))
         val host = profile.host
         val credentials = profile.credentials
         val password = credentials.password.takeUnless { host.useKeyAuth }
@@ -382,7 +386,7 @@ class SSHConnectionManager internal constructor(
             if (trusted) {
                 reconnect(sessionId)
             } else {
-                currentListener.onStateChanged(SSHConnectionState.Error("无法保存主机指纹"))
+                currentListener.onStateChanged(SSHConnectionState.Error(UserMessage(R.string.error_save_fingerprint)))
             }
         }
     }
@@ -430,7 +434,7 @@ class SSHConnectionManager internal constructor(
         overwriteExisting: Boolean = false,
         totalBytes: Long? = null
     ) {
-        require(fileName.isNotBlank()) { "文件名不能为空" }
+        require(fileName.isNotBlank()) { throw UserArgumentException(UserMessage(R.string.error_file_name_required)) }
         val remotePath = joinRemotePath(remoteDirectory, fileName)
         runTransfer(
             sessionId = sessionId,
@@ -673,7 +677,7 @@ class SSHConnectionManager internal constructor(
                     sessions[info.id]?.takeIf { it === info }
                         ?.listener
                 }
-                listener?.onStateChanged(SSHConnectionState.Error("SSH 连接清理失败"))
+                listener?.onStateChanged(SSHConnectionState.Error(UserMessage(R.string.error_connection_cleanup)))
             }
         }
         info.cleanupJob = job
@@ -719,9 +723,9 @@ class SSHConnectionManager internal constructor(
     )
 
     private fun currentOperation(sessionId: String): CurrentOperation = synchronized(lock) {
-        val info = sessions[sessionId] ?: throw IllegalStateException("SSH 会话不存在")
+        val info = sessions[sessionId] ?: throw UserStateException(UserMessage(R.string.error_session_missing))
         val connection = info.connection?.takeIf { it.isConnected }
-            ?: throw IllegalStateException("SSH 连接未就绪")
+            ?: throw UserStateException(UserMessage(R.string.error_connection_not_ready))
         CurrentOperation(info, info.generation, connection)
     }
 
@@ -744,7 +748,7 @@ class SSHConnectionManager internal constructor(
     ) {
         val operation = currentOperation(sessionId)
         val job = currentCoroutineContext()[Job]
-            ?: throw IllegalStateException("文件传输必须在 coroutine 中执行")
+            ?: throw UserStateException(UserMessage(R.string.error_transfer_context))
         val registered = synchronized(lock) {
             val current = sessions[sessionId]
             if (current === operation.info && current.generation == operation.generation &&
@@ -756,7 +760,7 @@ class SSHConnectionManager internal constructor(
                 false
             }
         }
-        check(registered) { "已有文件传输正在进行" }
+        check(registered) { throw UserStateException(UserMessage(R.string.file_transfer_in_progress)) }
 
         var transferredBytes = 0L
         setFileTransferStateIfCurrent(
@@ -829,7 +833,8 @@ class SSHConnectionManager internal constructor(
                         remotePath,
                         transferredBytes,
                         totalBytes,
-                        "文件传输失败"
+                        "File transfer failed",
+                        userMessage = UserMessage(R.string.file_transfer_failed)
                     )
                 )
                 throw failure
