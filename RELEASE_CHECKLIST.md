@@ -43,6 +43,10 @@
 - [ ] On a real device, process recreation expires a lost picker request safely and removes a newly created empty download
 - [ ] Disconnect during upload and download, reconnect, then verify the transfer state is not stuck and a new transfer completes
 
+- [ ] File and directory symlinks, relative/chained targets, and canonical breadcrumbs work against a real SFTP server
+- [ ] Broken/cyclic/inaccessible links and links to devices/FIFOs fail safely without breaking the directory listing
+- [ ] Link downloads use target metadata and alias names; uploads still refuse to overwrite symbolic links
+
 ## Data upgrade
 
 - [ ] Execute Room migration 1-to-2 against a real SQLite version-1 database, not only a recorded-SQL unit contract

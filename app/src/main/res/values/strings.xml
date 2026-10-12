@@ -80,7 +80,6 @@
     <string name="file_transfer_overwrite_check_failed">Unable to check whether the remote file exists. Upload cancelled.</string>
     <string name="file_transfer_download_request_expired">The download request has expired. Select the file again.</string>
     <string name="file_transfer_incomplete_document_cleanup_failed">Unable to delete the empty file created by the file picker. Please delete it manually.</string>
-    <string name="file_transfer_symlink_unsupported">Following symbolic links is not supported in this version</string>
     <string name="file_transfer_directory_limited">Too many entries. Showing only the first %1$d.</string>
     <string name="file_transfer_folder">Folder</string>
     <string name="file_transfer_symbolic_link">Symbolic link</string>
@@ -214,4 +213,5 @@
     <string name="language_simplified_chinese" translatable="false">简体中文</string>
     <string name="language_traditional_chinese" translatable="false">繁體中文</string>
     <string name="language_japanese" translatable="false">日本語</string>
+    <string name="error_remote_link_unavailable">Unable to open the remote target. The link may be broken, cyclic, or inaccessible.</string>
 </resources>

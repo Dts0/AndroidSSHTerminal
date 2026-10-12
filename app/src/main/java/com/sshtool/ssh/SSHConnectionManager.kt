@@ -422,6 +422,13 @@ class SSHConnectionManager internal constructor(
         return result
     }
 
+    suspend fun resolveRemoteEntry(sessionId: String, path: String): RemoteFileEntry {
+        val operation = currentOperation(sessionId)
+        val result = operation.connection.resolveRemoteEntry(path)
+        requireCurrentOperation(sessionId, operation)
+        return result
+    }
+
     /** Compatibility convenience for callers that do not need the canonical directory path. */
     suspend fun listRemoteFiles(sessionId: String, path: String = "."): List<RemoteFileEntry> =
         listRemoteDirectory(sessionId, path).entries

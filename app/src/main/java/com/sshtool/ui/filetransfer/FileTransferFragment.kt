@@ -29,6 +29,9 @@ import com.sshtool.ssh.RemoteFileEntry
 import com.sshtool.ssh.SSHConnectionState
 import com.sshtool.ui.terminal.TerminalViewModel
 import com.sshtool.ui.MainActivity
+import com.sshtool.util.UserMessage
+import com.sshtool.util.UserMessageCarrier
+import com.sshtool.util.resolveMessage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -52,6 +55,8 @@ class FileTransferFragment : Fragment() {
     private var currentPath = "."
     private var currentEntries: List<RemoteFileEntry> = emptyList()
     private var directoryJob: Job? = null
+    private var entryOpenJob: Job? = null
+    private var entryOpenGeneration = 0L
     private var uploadCheckJob: Job? = null
     private var pendingDownloadToken: String? = null
     private var overwriteDialog: AlertDialog? = null
@@ -167,7 +172,10 @@ class FileTransferFragment : Fragment() {
 
                     val wasConnected = isConnected
                     isConnected = session.connectionState is SSHConnectionState.Connected
-                    if (!isConnected) isTransferRequestPending = false
+                    if (!isConnected) {
+                        isTransferRequestPending = false
+                        cancelEntryOpen()
+                    }
                     renderTransferState(session.fileTransferState)
                     updateActions()
                     if (!wasConnected && isConnected && currentEntries.isEmpty()) {
@@ -179,6 +187,7 @@ class FileTransferFragment : Fragment() {
     }
 
     private fun loadDirectory(path: String) {
+        cancelEntryOpen()
         if (!isConnected) {
             binding.swipeRefresh.isRefreshing = false
             showToast(R.string.file_transfer_connection_required)
@@ -224,11 +233,50 @@ class FileTransferFragment : Fragment() {
         }
     }
 
+    private fun cancelEntryOpen() {
+        entryOpenGeneration++
+        entryOpenJob?.cancel()
+        entryOpenJob = null
+    }
+
     private fun openEntry(entry: RemoteFileEntry) {
-        if (entry.isSymbolicLink) {
-            showToast(R.string.file_transfer_symlink_unsupported)
+        cancelEntryOpen()
+        if (!isConnected) {
+            showToast(R.string.file_transfer_connection_required)
             return
         }
+        if (!entry.isSymbolicLink) {
+            openResolvedEntry(entry)
+            return
+        }
+        // Resolve lazily, so large directory listings do not cause one stat per link.
+        val generation = entryOpenGeneration
+        entryOpenJob = viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val resolved = viewModel.resolveRemoteEntry(args.sessionId, entry.path)
+                if (generation == entryOpenGeneration && isConnected &&
+                    viewLifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+                ) {
+                    openResolvedEntry(resolved)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (generation == entryOpenGeneration) {
+                    Toast.makeText(
+                        requireContext(),
+                        requireContext().resolveMessage(
+                            (e as? UserMessageCarrier)?.userMessage
+                                ?: UserMessage(R.string.error_remote_link_unavailable)
+                        ),
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
+    private fun openResolvedEntry(entry: RemoteFileEntry) {
         if (entry.isDirectory) {
             loadDirectory(entry.path)
             return
@@ -580,7 +628,14 @@ class FileTransferFragment : Fragment() {
         if (!navigated) isLeavingFileTransfer = false
     }
 
+    override fun onStop() {
+        // A slow link lookup must not launch a document picker after Home/navigation.
+        cancelEntryOpen()
+        super.onStop()
+    }
+
     override fun onDestroyView() {
+        cancelEntryOpen()
         directoryJob?.cancel()
         directoryJob = null
         uploadCheckJob?.cancel()

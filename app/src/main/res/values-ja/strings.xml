@@ -78,7 +78,6 @@
     <string name="file_transfer_overwrite_check_failed">リモートファイルの存在を確認できません。アップロードをキャンセルしました</string>
     <string name="file_transfer_download_request_expired">ダウンロード要求が失効しました。ファイルを再選択してください</string>
     <string name="file_transfer_incomplete_document_cleanup_failed">ファイル選択画面で作成した空のファイルを削除できません。手動で削除してください</string>
-    <string name="file_transfer_symlink_unsupported">このバージョンではシンボリックリンクをたどれません</string>
     <string name="file_transfer_directory_limited">項目が多すぎます。最初の %1$d 件のみ表示しています</string>
     <string name="file_transfer_folder">フォルダー</string>
     <string name="file_transfer_symbolic_link">シンボリックリンク</string>
@@ -189,4 +188,5 @@
     <string name="error_forward_start">ポート転送を開始できません</string>
     <string name="error_remote_filename">リモートファイル名が無効です</string>
     <string name="error_remote_filename_separator">リモートファイル名にパス区切り文字は使えません</string>
+    <string name="error_remote_link_unavailable">リモートのリンク先を開けません。リンク切れ、循環、またはアクセス権限がない可能性があります。</string>
 </resources>

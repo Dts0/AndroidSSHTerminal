@@ -37,6 +37,40 @@ import java.io.ByteArrayInputStream
 class SSHConnectionManagerTest {
 
     @Test
+    fun linkResolutionRoutesBySessionAndRejectsRetiredGeneration() = runBlocking {
+        val host = host(90, "links.example")
+        val factory = FakeTransportFactory()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val manager = SSHConnectionManager(factory, scope)
+        val listener = RecordingListener()
+        try {
+            manager.connect("links", host, repositoryFor(host), listener)
+            val transport = factory.await(host.host)
+            transport.releaseConnect.complete(Unit)
+            listener.awaitState { it is SSHConnectionState.Connected }
+            val entry = manager.resolveRemoteEntry("links", "/alias")
+            assertEquals("/target", entry.path)
+            assertEquals("alias", entry.name)
+            assertTrue(entry.isSymbolicLink)
+
+            transport.blockResolve = true
+            val pending = async {
+                runCatching { manager.resolveRemoteEntry("links", "/alias") }.exceptionOrNull()
+            }
+            transport.resolveStarted.await()
+            manager.disconnect("links")
+            transport.releaseResolve.complete(Unit)
+            assertTrue(withTimeout(5_000) { pending.await() } is CancellationException)
+        } finally {
+            factory.createdTransports().forEach { it.releaseResolve.complete(Unit) }
+            factory.releaseAll()
+            manager.shutdown()
+            scope.cancel()
+        }
+    }
+
+
+    @Test
     fun connectedGenerationStartsEachConfiguredForwardAndPublishesIsolatedStates() = runBlocking {
         val host = host(70, "forward.example")
         val rules = listOf(
@@ -859,6 +893,9 @@ class SSHConnectionManagerTest {
         val startedForwardIds = CopyOnWriteArrayList<Long>()
         val failedForwardIds = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
         @Volatile var transferFailure: Exception? = null
+        @Volatile var blockResolve = false
+        val resolveStarted = CompletableDeferred<Unit>()
+        val releaseResolve = CompletableDeferred<Unit>()
         @Volatile var blockUpload = false
         val uploadStarted = CompletableDeferred<Unit>()
         val releaseUpload = CompletableDeferred<Unit>()
@@ -920,6 +957,14 @@ class SSHConnectionManagerTest {
             "/home/user",
             listOf(RemoteFileEntry("hello.txt", "/home/user/hello.txt", false, size = 4))
         )
+
+        override suspend fun resolveRemoteEntry(path: String): RemoteFileEntry {
+            if (blockResolve) {
+                resolveStarted.complete(Unit)
+                withContext(NonCancellable) { releaseResolve.await() }
+            }
+            return RemoteFileEntry(path.substringAfterLast('/'), "/target", false, isSymbolicLink = true, size = 42)
+        }
 
         override suspend fun uploadFile(
             input: java.io.InputStream,

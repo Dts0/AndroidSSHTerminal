@@ -48,6 +48,9 @@ This project includes:
   `AllowTcpForwarding` and `GatewayPorts` policy.
 - SFTP channels reuse the authenticated, host-key-verified SSH connection. Files are streamed through Android's Storage
   Access Framework; the app does not request broad storage access.
+- Remote symbolic links can be opened: directory links navigate to the canonical target directory, and file links
+  download the target contents using the link name as the suggested local filename. Broken, cyclic, inaccessible,
+  and special-file targets report an error. Uploading over a symbolic link remains prohibited.
 - Port mappings and transfers have the lifetime of the app's SSH session. They are not background services and stop if
   the session disconnects or Android terminates the app process.
 - Passwords, private keys, passphrases, file contents, file-provider URIs, and terminal control-sequence payloads must

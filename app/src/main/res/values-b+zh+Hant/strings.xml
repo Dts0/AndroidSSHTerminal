@@ -78,7 +78,6 @@
     <string name="file_transfer_overwrite_check_failed">無法確認遠端檔案是否存在，已取消上傳</string>
     <string name="file_transfer_download_request_expired">下載請求已失效，請重新選擇檔案</string>
     <string name="file_transfer_incomplete_document_cleanup_failed">無法刪除檔案選擇器建立的空檔案，請手動刪除</string>
-    <string name="file_transfer_symlink_unsupported">此版本不支援跟隨符號連結</string>
     <string name="file_transfer_directory_limited">目錄項目過多，僅顯示前 %1$d 項</string>
     <string name="file_transfer_folder">資料夾</string>
     <string name="file_transfer_symbolic_link">符號連結</string>
@@ -189,4 +188,5 @@
     <string name="error_forward_start">連接埠對應啟動失敗</string>
     <string name="error_remote_filename">遠端檔案名稱無效</string>
     <string name="error_remote_filename_separator">遠端檔案名稱不可包含路徑分隔符號</string>
+    <string name="error_remote_link_unavailable">無法開啟遠端目標，連結可能已失效、存在循環或沒有存取權限。</string>
 </resources>

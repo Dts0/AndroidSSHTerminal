@@ -23,6 +23,14 @@ class FileTransferPickerStateViewModelTest {
     }
 
     @Test
+    fun resolvedLinkKeepsAliasNameAndTargetPathThroughDocumentPicker() {
+        val state = FileTransferPickerStateViewModel()
+        val entry = RemoteFileEntry("alias.txt", "/srv/actual.txt", false, isSymbolicLink = true, size = 1024)
+        val token = state.registerDownload("session", entry)
+        assertEquals(entry, state.consumeDownload("session", token))
+    }
+
+    @Test
     fun rawCurrentPathStaysScopedToInMemorySessionState() {
         val state = FileTransferPickerStateViewModel()
 

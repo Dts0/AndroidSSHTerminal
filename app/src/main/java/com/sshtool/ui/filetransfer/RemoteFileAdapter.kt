@@ -55,7 +55,7 @@ internal class RemoteFileAdapter(
                     else context.getString(R.string.file_transfer_file_size, size, modified)
                 }
             }
-            openIndicator.isVisible = !entry.isSymbolicLink
+            openIndicator.isVisible = true
             root.contentDescription = context.getString(R.string.file_transfer_item_open, safeName)
             root.setOnClickListener { onClick(entry) }
         }

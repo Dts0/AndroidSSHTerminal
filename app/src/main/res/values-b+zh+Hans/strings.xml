@@ -78,7 +78,6 @@
     <string name="file_transfer_overwrite_check_failed">无法确认远程文件是否存在，上传已取消</string>
     <string name="file_transfer_download_request_expired">下载请求已失效，请重新选择文件</string>
     <string name="file_transfer_incomplete_document_cleanup_failed">无法删除文件选择器创建的空文件，请手动删除</string>
-    <string name="file_transfer_symlink_unsupported">首个版本不支持跟随符号链接</string>
     <string name="file_transfer_directory_limited">目录内容过多，仅显示前 %1$d 项</string>
     <string name="file_transfer_folder">文件夹</string>
     <string name="file_transfer_symbolic_link">符号链接</string>
@@ -189,4 +188,5 @@
     <string name="error_forward_start">端口映射启动失败</string>
     <string name="error_remote_filename">远程文件名无效</string>
     <string name="error_remote_filename_separator">远程文件名不能包含路径分隔符</string>
+    <string name="error_remote_link_unavailable">无法打开远程目标，链接可能已失效、存在循环或没有访问权限。</string>
 </resources>

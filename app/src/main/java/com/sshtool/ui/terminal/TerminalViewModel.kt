@@ -430,6 +430,13 @@ class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
         return manager.listRemoteDirectory(sessionId, path)
     }
 
+    suspend fun resolveRemoteEntry(sessionId: String, path: String): com.sshtool.ssh.RemoteFileEntry {
+        require(sessions.containsKey(sessionId)) {
+            throw UserArgumentException(UserMessage(R.string.file_transfer_session_unavailable))
+        }
+        return manager.resolveRemoteEntry(sessionId, path)
+    }
+
     /** Start an upload owned by this activity ViewModel, not by the file page. */
     fun uploadFile(
         sessionId: String,

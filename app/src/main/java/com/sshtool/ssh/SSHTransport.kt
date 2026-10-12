@@ -45,6 +45,10 @@ internal interface SSHTransport {
     suspend fun listRemoteDirectory(path: String): RemoteDirectoryListing =
         throw UserStateException(UserMessage(R.string.error_sftp_unsupported))
 
+    /** Resolve a selected alias to a directory or regular-file target. */
+    suspend fun resolveRemoteEntry(path: String): RemoteFileEntry =
+        throw UserStateException(UserMessage(R.string.error_sftp_unsupported))
+
     suspend fun uploadFile(
         input: InputStream,
         remoteDirectory: String,

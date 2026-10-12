@@ -467,6 +467,11 @@ internal class SSHConnection(
             )
         }
 
+    override suspend fun resolveRemoteEntry(path: String): RemoteFileEntry =
+        withSftpChannel(isTransfer = false) { sftp ->
+            resolveRemoteFile(SftpRemoteFileAccess(sftp), path)
+        }
+
     override suspend fun uploadFile(
         input: InputStream,
         remoteDirectory: String,
@@ -579,14 +584,11 @@ internal class SSHConnection(
         totalBytes: Long?,
         onProgress: (Long) -> Unit
     ): Unit = withSftpChannel(isTransfer = true) { sftp ->
-        // lstat the caller-selected entry before realpath so a symlink cannot
-        // be resolved first and thereby bypass the first-version restriction.
-        val attrs = sftp.lstat(remotePath)
-        require(!attrs.isDir) { throw UserArgumentException(UserMessage(R.string.error_download_directory)) }
-        require(!attrs.isLink) { throw UserArgumentException(UserMessage(R.string.file_transfer_symlink_unsupported)) }
-        require(attrs.isReg) { throw UserArgumentException(UserMessage(R.string.error_download_regular_only)) }
-        val canonicalPath = sftp.realpath(remotePath)
-        val expectedBytes = totalBytes ?: attrs.size.takeIf { it >= 0 }
+        // Revalidate at transfer time: a selected link or its target may have changed
+        // while Android's document picker was open. Only regular files may be read.
+        val target = resolveRemoteDownload(SftpRemoteFileAccess(sftp), remotePath)
+        val canonicalPath = target.path
+        val expectedBytes = target.size.takeIf { it >= 0 } ?: totalBytes
         val context = currentCoroutineContext()
         sftp.get(
             canonicalPath,
