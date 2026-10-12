@@ -54,6 +54,6 @@ internal class KeyRepeatController(
 
     companion object {
         const val INITIAL_DELAY_MS = 400L
-        const val REPEAT_INTERVAL_MS = 200L
+        const val REPEAT_INTERVAL_MS = 50L
     }
 }

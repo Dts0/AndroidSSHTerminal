@@ -32,7 +32,7 @@ class KeyRepeatControllerTest {
     }
 
     @Test
-    fun `press sends immediately then repeats at 400 ms and every 200 ms`() {
+    fun `press sends immediately then repeats at 400 ms and every 50 ms`() {
         val scheduler = FakeScheduler()
         val controller = KeyRepeatController(scheduler::schedule)
         val sent = mutableListOf<Long>()
@@ -42,10 +42,10 @@ class KeyRepeatControllerTest {
         assertEquals(listOf(0L), sent)
         scheduler.advanceTo(400)
         assertEquals(listOf(0L, 400L), sent)
-        scheduler.advanceTo(599)
+        scheduler.advanceTo(449)
         assertEquals(listOf(0L, 400L), sent)
         scheduler.advanceTo(1_000)
-        assertEquals(listOf(0L, 400L, 600L, 800L, 1_000L), sent)
+        assertEquals(listOf(0L) + (400L..1_000L step 50L), sent)
         assertEquals(1, scheduler.pendingCount)
     }
 
@@ -74,7 +74,7 @@ class KeyRepeatControllerTest {
         scheduler.advanceTo(800)
         controller.stop()
         scheduler.advanceTo(2_000)
-        assertEquals(4, sent)
+        assertEquals(10, sent)
         assertEquals(0, scheduler.pendingCount)
     }
 
@@ -135,7 +135,7 @@ class KeyRepeatControllerTest {
         scheduler.advanceTo(699)
         assertEquals(listOf("up", "down"), sent)
         scheduler.advanceTo(900)
-        assertEquals(listOf("up", "down", "down", "down"), sent)
+        assertEquals(listOf("up", "down") + List(5) { "down" }, sent)
         assertEquals(1, stopped)
         assertEquals(1, scheduler.pendingCount)
     }

@@ -8,7 +8,7 @@ Android SSH terminal client with multiple sessions, port forwarding, and SFTP fi
 
 - Compact terminal header with session tabs, connection status, and a session actions menu.
 - Two rows of shortcut keys, including arrows, PgUp/PgDn, Delete, Enter, and Paste. Direction keys repeat after a
-  400 ms hold, then every 200 ms. Screenshots and screen recording are allowed.
+  400 ms hold, then every 50 ms. Screenshots and screen recording are allowed.
 - Interface languages: English, Simplified Chinese, Traditional Chinese, and Japanese.
 - Open the **⋮ menu on the home screen → Settings → Language** to change the language.
   **Auto (follow system)** is the default: supported system languages are matched in priority order, with English
