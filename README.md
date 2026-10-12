@@ -51,8 +51,13 @@ This project includes:
 - Remote symbolic links can be opened: directory links navigate to the canonical target directory, and file links
   download the target contents using the link name as the suggested local filename. Broken, cyclic, inaccessible,
   and special-file targets report an error. Uploading over a symbolic link remains prohibited.
-- Port mappings and transfers have the lifetime of the app's SSH session. They are not background services and stop if
-  the session disconnects or Android terminates the app process.
+- Port mappings and transfers have the lifetime of the app's SSH session and stop when it disconnects. Optional
+  **Settings → Keep-alive mode** uses a foreground service and a bounded, renewable CPU wake lock while sessions are
+  connecting or connected. It is off by default and uses more battery. Allow notifications and follow the battery
+  settings guidance to select **Unrestricted / Don’t optimize**; manufacturer background restrictions may still apply.
+- Keep-alive protects existing sessions when switching apps or locking the screen. Removing the app from recent tasks
+  closes all sessions and transfers and releases the wake lock. No idle service, boot startup, automatic reconnect,
+  or process-death session restoration is provided; Android force-stop and network failures cannot be prevented.
 - Passwords, private keys, passphrases, file contents, file-provider URIs, and terminal control-sequence payloads must
   never be written to logs.
 

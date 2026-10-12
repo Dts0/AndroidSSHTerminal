@@ -47,6 +47,18 @@
 - [ ] Broken/cyclic/inaccessible links and links to devices/FIFOs fail safely without breaking the directory listing
 - [ ] Link downloads use target metadata and alias names; uploads still refuse to overwrite symbolic links
 
+## Background keep-alive
+
+- [ ] Mode defaults off, survives restart, and starts no service without a connecting/connected session
+- [ ] API 26, 33, and 34+ handle foreground service startup and notification permission denial safely
+- [ ] Multiple sessions share one service; errors/disconnects stop protection when no eligible sessions remain
+- [ ] On a real device, Home/app switching and at least 30 minutes of screen-off keep the SSH terminal usable
+- [ ] Background SFTP/forwarding and language changes preserve existing sessions
+- [ ] Enabling shows battery/unrestricted guidance; returning from system settings refreshes optimization status
+- [ ] Turning the mode off from settings or the notification stops protection without actively disconnecting sessions
+- [ ] Swiping away the task closes terminals/transfers, removes the notification, and releases the wake lock
+- [ ] Startup/renewal failure and repeated cleanup leave no wake lock or restarting service
+
 ## Data upgrade
 
 - [ ] Execute Room migration 1-to-2 against a real SQLite version-1 database, not only a recorded-SQL unit contract

@@ -189,4 +189,20 @@
     <string name="error_remote_filename">遠端檔案名稱無效</string>
     <string name="error_remote_filename_separator">遠端檔案名稱不可包含路徑分隔符號</string>
     <string name="error_remote_link_unavailable">無法開啟遠端目標，連結可能已失效、存在循環或沒有存取權限。</string>
+    <string name="settings_keep_alive">保活模式</string>
+    <string name="settings_keep_alive_summary">透過前景服務和 CPU 喚醒鎖，盡量保持有效 SSH 工作階段在背景執行，會增加耗電。從最近任務移除 APP 將中斷所有工作階段。</string>
+    <string name="keep_alive_off">保活已關閉</string>
+    <string name="keep_alive_waiting">已開啟，等待 SSH 工作階段</string>
+    <string name="keep_alive_active">保活工作階段數：%1$d</string>
+    <string name="keep_alive_start_failed">保活啟動失敗。請返回 APP，或關閉後重新開啟保活以重試。</string>
+    <string name="keep_alive_notification_denied">通知已關閉。保活仍可執行，但通知可能無法顯示，請在系統應用程式設定中允許通知。</string>
+    <string name="settings_battery">電池與背景設定</string>
+    <string name="settings_battery_exempt">系統電池最佳化：已豁免。廠商的背景限制仍可能生效。</string>
+    <string name="settings_battery_not_exempt">系統電池最佳化：未豁免。請在系統設定中選擇「無限制」或「不最佳化」。</string>
+    <string name="keep_alive_battery_guidance">保活會增加耗電，無法保證永久連線。請在系統應用程式設定中進入「電池」，選擇「無限制」或「不最佳化」；如果裝置提供「允許背景活動」，也請開啟。不同廠商的選項名稱可能不同。從最近任務移除 APP 仍會中斷所有工作階段。</string>
+    <string name="settings_open_system">前往設定</string>
+    <string name="settings_later">稍後</string>
+    <string name="settings_system_unavailable">此裝置無法開啟系統設定。</string>
+    <string name="keep_alive_channel">SSH 保活</string>
+    <string name="keep_alive_disable">關閉保活</string>
 </resources>

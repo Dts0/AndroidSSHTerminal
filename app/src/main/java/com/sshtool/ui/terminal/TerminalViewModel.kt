@@ -7,6 +7,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.sshtool.R
+import com.sshtool.SSHToolApp
+import com.sshtool.background.needsSshKeepAlive
 import com.sshtool.data.model.Host
 import com.sshtool.data.repository.HostRepository
 import com.sshtool.ssh.FileTransferDirection
@@ -81,6 +83,8 @@ class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
     )
 
     private val manager = SSHConnectionManager()
+    private val keepAliveController = SSHToolApp.instance.keepAliveController
+    private val keepAliveOwnerToken = Any()
     private val sessions = linkedMapOf<String, ManagedSession>()
     private val sessionMutex = Mutex()
     private var activeSessionId: String? = null
@@ -101,6 +105,9 @@ class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
     val events: SharedFlow<TerminalUiEvent> = _events.asSharedFlow()
 
     init {
+        keepAliveController.attachOwner(keepAliveOwnerToken) {
+            sessions.keys.toList().forEach(::closeSession)
+        }
         // Manager flows are transport-owned and can change without an SSH
         // connection-state callback (progress ticks and individual forwarding
         // failures). Fold them into the activity-owned UI snapshot.
@@ -674,6 +681,9 @@ class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
         }
 
     private fun publish() {
+        keepAliveController.updateSessionCount(
+            keepAliveOwnerToken, sessions.values.count { needsSshKeepAlive(it.connectionState) }
+        )
         _uiState.value = TerminalUiState(
             sessions = sessions.values.map(::snapshot),
             activeSessionId = activeSessionId?.takeIf(sessions::containsKey)
@@ -701,6 +711,7 @@ class TerminalViewModel(private val repository: HostRepository) : ViewModel() {
         }
 
     override fun onCleared() {
+        keepAliveController.detachOwner(keepAliveOwnerToken)
         sessions.keys.forEach(manager::cancelFileTransfer)
         transferRequestJobs.values.forEach { it.cancel() }
         transferRequestJobs.clear()

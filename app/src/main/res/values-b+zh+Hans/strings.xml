@@ -189,4 +189,20 @@
     <string name="error_remote_filename">远程文件名无效</string>
     <string name="error_remote_filename_separator">远程文件名不能包含路径分隔符</string>
     <string name="error_remote_link_unavailable">无法打开远程目标，链接可能已失效、存在循环或没有访问权限。</string>
+    <string name="settings_keep_alive">保活模式</string>
+    <string name="settings_keep_alive_summary">通过前台服务和 CPU 唤醒锁，尽量保持有效 SSH 会话在后台运行，会增加耗电。从最近任务划掉 APP 将断开所有会话。</string>
+    <string name="keep_alive_off">保活已关闭</string>
+    <string name="keep_alive_waiting">已开启，等待 SSH 会话</string>
+    <string name="keep_alive_active">保活会话数：%1$d</string>
+    <string name="keep_alive_start_failed">保活启动失败。请回到 APP，或关闭后重新开启保活以重试。</string>
+    <string name="keep_alive_notification_denied">通知已关闭。保活仍可运行，但通知可能不可见，请在系统应用设置中允许通知。</string>
+    <string name="settings_battery">电池与后台设置</string>
+    <string name="settings_battery_exempt">系统电池优化：已豁免。厂商的后台限制仍可能生效。</string>
+    <string name="settings_battery_not_exempt">系统电池优化：未豁免。请在系统设置中选择“无限制”或“不优化”。</string>
+    <string name="keep_alive_battery_guidance">保活会增加耗电，不能保证永久连接。请在系统应用设置中进入“电池”，选择“无限制”或“不优化”；如果设备提供“允许后台活动”，也请开启。不同厂商的选项名称可能不同。从最近任务划掉 APP 仍会断开所有会话。</string>
+    <string name="settings_open_system">去设置</string>
+    <string name="settings_later">稍后</string>
+    <string name="settings_system_unavailable">此设备无法打开系统设置。</string>
+    <string name="keep_alive_channel">SSH 保活</string>
+    <string name="keep_alive_disable">关闭保活</string>
 </resources>

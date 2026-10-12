@@ -51,6 +51,16 @@ class MainActivity : AppCompatActivity() {
         navController = navHostFragment.navController
     }
 
+    override fun onStart() {
+        super.onStart()
+        SSHToolApp.instance.keepAliveController.setForeground(true)
+    }
+
+    override fun onStop() {
+        SSHToolApp.instance.keepAliveController.setForeground(false)
+        super.onStop()
+    }
+
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean(
             STATE_TERMINAL_VIEW_MODEL_REQUESTED,

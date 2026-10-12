@@ -4,6 +4,11 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:name=".SSHToolApp"
         android:allowBackup="false"
@@ -16,6 +21,16 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.SSHTerminal"
         android:usesCleartextTraffic="false">
+
+        <service
+            android:name=".background.KeepAliveService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Maintain user-initiated SSH terminal sessions, port forwarding and SFTP transfers while the app is backgrounded; stops when sessions end or the task is removed." />
+        </service>
 
         <!-- AppCompat stores the override on API 26–32 and migrates it to API 33+. -->
         <service

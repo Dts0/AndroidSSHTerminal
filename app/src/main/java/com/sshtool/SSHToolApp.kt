@@ -2,6 +2,7 @@ package com.sshtool
 
 import android.app.Application
 import com.sshtool.data.repository.HostRepository
+import com.sshtool.background.KeepAliveController
 
 class SSHToolApp : Application() {
 
@@ -12,6 +13,8 @@ class SSHToolApp : Application() {
      * start time. First access pays the cost on whichever thread reads it.
      */
     val hostRepository: HostRepository by lazy { HostRepository(this) }
+
+    internal val keepAliveController: KeepAliveController by lazy { KeepAliveController(this) }
 
     override fun onCreate() {
         super.onCreate()
